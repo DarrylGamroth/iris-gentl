@@ -141,6 +141,10 @@ if(BUILD_TESTING)
     add_dependencies(iris-mixed-mock iris-second-mock-cti)
     add_test(NAME mixed-mock-producers COMMAND iris-mixed-mock $<TARGET_FILE:iris-test-cti> "${second_mock_cti}")
     set_tests_properties(mixed-mock-producers PROPERTIES TIMEOUT 10)
+    add_executable(iris-mock-buffer-pool tests/mock_buffer_pool.c tests/allocations.c)
+    target_link_libraries(iris-mock-buffer-pool PRIVATE iris ${CMAKE_DL_LIBS})
+    add_test(NAME mock-buffer-pool COMMAND iris-mock-buffer-pool $<TARGET_FILE:iris-test-cti>)
+    set_tests_properties(mock-buffer-pool PROPERTIES TIMEOUT 10)
     add_test(NAME example-features COMMAND "${CMAKE_COMMAND}"
         "-DFEATURES=$<TARGET_FILE:iris-example-features>" "-DCTI=$<TARGET_FILE:iris-test-cti>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/example_features.cmake")
@@ -207,7 +211,7 @@ if(BUILD_TESTING)
             COMMAND ${GCOVR} --root ${CMAKE_CURRENT_SOURCE_DIR}
                 --filter "${CMAKE_CURRENT_SOURCE_DIR}/tools/"
                 --fail-under-line 90 --print-summary ${CMAKE_BINARY_DIR}
-            DEPENDS iris-capture iris-mixed-mock iris-gentl iris-failures iris-progressive iris-nodes iris-feature-browse iris-feature-batch iris-events iris-feature-values
+            DEPENDS iris-capture iris-mixed-mock iris-mock-buffer-pool iris-gentl iris-failures iris-progressive iris-nodes iris-feature-browse iris-feature-batch iris-events iris-feature-values
                     iris-nonblocking iris-test-cti iris-example-features iris-example-configure-and-acquire
                     iris-example-software-trigger iris-payloads iris-write-stack
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})

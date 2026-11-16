@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <thread>
 #include <stdexcept>
 
@@ -13,6 +14,24 @@ namespace {
 char scenario[32];
 GC_ERROR last_error;
 std::array<unsigned char, 16> pixels{};
+struct AnnouncedBuffer {
+    std::array<unsigned char, 16> storage{};
+    void *data = nullptr;
+    void *user = nullptr;
+    size_t size = 0;
+    bool queued = false;
+};
+struct BufferPool {
+    std::array<AnnouncedBuffer, 16> buffers{};
+    std::array<AnnouncedBuffer *, 16> queue{};
+    size_t announced = 0;
+    size_t queued = 0;
+    size_t head = 0;
+    size_t minimum = 1;
+    size_t expected = 0;
+};
+BufferPool pool;
+std::mutex pool_queue_mutex;
 unsigned progressive_poll = 0;
 std::chrono::steady_clock::time_point next_progressive_frame;
 void *announced_memory;
@@ -234,6 +253,38 @@ size_t event_handle_slot(EVENT_HANDLE event)
     return value > 20 && value < 26 ? value - 20 : 0;
 }
 GC_ERROR error(GC_ERROR code) { return last_error = code; }
+bool read_buffer_count(const char *name, size_t &count)
+{
+    const char *text = std::getenv(name);
+    if (!text) return true;
+    char *end = nullptr;
+    const auto value = std::strtoul(text, &end, 10);
+    if (end == text || *end || !value || value > pool.buffers.size()) return false;
+    count = value;
+    return true;
+}
+AnnouncedBuffer *find_buffer(BUFFER_HANDLE handle)
+{
+    for (auto &buffer : pool.buffers)
+        if (handle == &buffer && buffer.data) return &buffer;
+    return nullptr;
+}
+GC_ERROR announce_buffer(void *memory, size_t size, void *user, BUFFER_HANDLE *out)
+{
+    if (armed) return error(GC_ERR_RESOURCE_IN_USE);
+    if (size < pixels.size() || (!memory && size != pixels.size()))
+        return error(GC_ERR_INVALID_PARAMETER);
+    for (auto &buffer : pool.buffers) {
+        if (buffer.data) continue;
+        buffer.data = memory ? memory : buffer.storage.data();
+        buffer.size = size;
+        buffer.user = user;
+        ++pool.announced;
+        *out = &buffer;
+        return GC_ERR_SUCCESS;
+    }
+    return error(GC_ERR_OUT_OF_MEMORY);
+}
 GC_ERROR text(const char *value, char *out, size_t *size)
 {
     const auto n = std::strlen(value) + 1;
@@ -354,6 +405,11 @@ EXPORT(GCInitLib)()
 {
     const char *value = std::getenv("IRIS_FAULT");
     std::strncpy(scenario, value ? value : "", sizeof(scenario) - 1);
+    pool = {};
+    if (mode("progressive-pool") &&
+        (!read_buffer_count("IRIS_MOCK_MIN_BUFFERS", pool.minimum) ||
+         !read_buffer_count("IRIS_MOCK_EXPECT_BUFFERS", pool.expected)))
+        return error(GC_ERR_INVALID_PARAMETER);
     queued = delivered = false;
     completions = failures = interface_closes = 0;
     armed = system_open = interface_open = failed_device_open = partial_stream = false;
@@ -454,7 +510,7 @@ EXPORT(DevOpenDataStream)(DEV_HANDLE, const char *id, DS_HANDLE *out)
 }
 EXPORT(DSClose)(DS_HANDLE)
 {
-    if (event_queues[5].active) std::abort();
+    if (event_queues[5].active || pool.announced) std::abort();
     if (partial_stream && !failures++) return error(GC_ERR_BUSY);
     partial_stream = false;
     return GC_ERR_SUCCESS;
@@ -466,18 +522,27 @@ EXPORT(DSGetInfo)(DS_HANDLE, STREAM_INFO_CMD cmd, INFO_DATATYPE *type, void *out
         return info(INFO_DATATYPE_BOOL8, bool8_t(armed), type, out, size);
     }
     if (cmd == STREAM_INFO_DEFINES_PAYLOADSIZE) return info(INFO_DATATYPE_BOOL8, bool8_t{1}, type, out, size);
+    if (mode("progressive-pool")) {
+        std::lock_guard lock(pool_queue_mutex);
+        if (cmd == STREAM_INFO_BUF_ANNOUNCE_MIN) return info(INFO_DATATYPE_SIZET, pool.minimum, type, out, size);
+        if (cmd == STREAM_INFO_NUM_ANNOUNCED) return info(INFO_DATATYPE_SIZET, pool.announced, type, out, size);
+        if (cmd == STREAM_INFO_NUM_QUEUED) return info(INFO_DATATYPE_SIZET, pool.queued, type, out, size);
+    }
     return info(INFO_DATATYPE_SIZET, size_t{cmd == STREAM_INFO_BUF_ANNOUNCE_MIN ? 1u :
                        cmd == STREAM_INFO_PAYLOAD_SIZE && gendc_payload() ? gendc_bytes() :
                        cmd == STREAM_INFO_PAYLOAD_SIZE && mode("chunk-typed") ? 52u : 16u}, type, out, size);
 }
-EXPORT(DSAllocAndAnnounceBuffer)(DS_HANDLE, size_t, void *, BUFFER_HANDLE *out)
+EXPORT(DSAllocAndAnnounceBuffer)(DS_HANDLE, size_t size, void *user, BUFFER_HANDLE *out)
 {
+    if (mode("progressive-pool")) return announce_buffer(nullptr, size, user, out);
     if (mode("allocate")) return error(GC_ERR_OUT_OF_MEMORY);
     if (mode("announce")) return error(GC_ERR_NOT_IMPLEMENTED);
     *out = handle(6); return 0;
 }
-EXPORT(DSAnnounceBuffer)(DS_HANDLE, void *memory, size_t, void *, BUFFER_HANDLE *out)
+EXPORT(DSAnnounceBuffer)(DS_HANDLE, void *memory, size_t size, void *user, BUFFER_HANDLE *out)
 {
+    if (mode("progressive-pool"))
+        return memory ? announce_buffer(memory, size, user, out) : error(GC_ERR_INVALID_PARAMETER);
     if (mode("caller-unsupported")) return error(GC_ERR_NOT_IMPLEMENTED);
     if (announced_memory) std::abort();
     announced_memory = memory;
@@ -503,15 +568,35 @@ EXPORT(DSAnnounceBuffer)(DS_HANDLE, void *memory, size_t, void *, BUFFER_HANDLE 
     if (mode("caller-rollback")) return error(GC_ERR_IO);
     return 0;
 }
-EXPORT(DSRevokeBuffer)(DS_HANDLE, BUFFER_HANDLE, void **, void **)
+EXPORT(DSRevokeBuffer)(DS_HANDLE, BUFFER_HANDLE handle, void **memory, void **user)
 {
     if (armed) std::abort(); // DMA may still own the buffer.
+    if (mode("progressive-pool")) {
+        auto *buffer = find_buffer(handle);
+        if (!buffer) return error(GC_ERR_INVALID_HANDLE);
+        if (buffer->queued) return error(GC_ERR_RESOURCE_IN_USE);
+        if (memory) *memory = buffer->data == buffer->storage.data() ? nullptr : buffer->data;
+        if (user) *user = buffer->user;
+        *buffer = {};
+        --pool.announced;
+        return GC_ERR_SUCCESS;
+    }
     if ((mode("revoke") || mode("caller-rollback")) && !failures++) return error(GC_ERR_BUSY);
     announced_memory = nullptr;
     return 0;
 }
-EXPORT(DSQueueBuffer)(DS_HANDLE, BUFFER_HANDLE)
+EXPORT(DSQueueBuffer)(DS_HANDLE, BUFFER_HANDLE handle)
 {
+    if (mode("progressive-pool")) {
+        std::lock_guard lock(pool_queue_mutex);
+        auto *buffer = find_buffer(handle);
+        if (!buffer) return error(GC_ERR_INVALID_HANDLE);
+        if (buffer->queued) return error(GC_ERR_RESOURCE_IN_USE);
+        pool.queue[(pool.head + pool.queued) % pool.queue.size()] = buffer;
+        buffer->queued = true;
+        ++pool.queued;
+        return GC_ERR_SUCCESS;
+    }
     if (mode("throw-requeue") && delivered) throw std::runtime_error("injected requeue exception");
     if (mode("queue") || (mode("requeue") && delivered)) return error(GC_ERR_IO);
     queued = true;
@@ -520,15 +605,26 @@ EXPORT(DSQueueBuffer)(DS_HANDLE, BUFFER_HANDLE)
         next_progressive_frame = std::chrono::steady_clock::now() + std::chrono::milliseconds(2);
     return 0;
 }
-EXPORT(DSFlushQueue)(DS_HANDLE, ACQ_QUEUE_TYPE)
+EXPORT(DSFlushQueue)(DS_HANDLE, ACQ_QUEUE_TYPE type)
 {
     if (armed) std::abort();
+    if (mode("progressive-pool")) {
+        if (type != ACQ_QUEUE_ALL_DISCARD) return error(GC_ERR_NOT_IMPLEMENTED);
+        for (auto &buffer : pool.buffers) buffer.queued = false;
+        pool.head = pool.queued = 0;
+    }
     queued = false;
     return 0;
 }
 EXPORT(DSStartAcquisition)(DS_HANDLE, ACQ_START_FLAGS, uint64_t)
 {
     if (mode("start")) return error(GC_ERR_IO);
+    if (mode("progressive-pool") &&
+        (pool.queued < pool.minimum || (pool.expected && pool.announced != pool.expected))) {
+        std::fprintf(stderr, "Mock buffer count: announced %zu, queued %zu, minimum %zu, expected %zu\n",
+                     pool.announced, pool.queued, pool.minimum, pool.expected);
+        return error(GC_ERR_INVALID_PARAMETER);
+    }
     armed = true;
     registers[software_trigger_register] = 0;
     if (mode("armed-throw")) throw std::runtime_error("start threw after arming");
@@ -544,8 +640,18 @@ EXPORT(DSStopAcquisition)(DS_HANDLE, ACQ_STOP_FLAGS)
     registers[software_trigger_register] = 0;
     return 0;
 }
-EXPORT(DSGetBufferInfo)(DS_HANDLE, BUFFER_HANDLE, BUFFER_INFO_CMD cmd, INFO_DATATYPE *type, void *out, size_t *size)
+EXPORT(DSGetBufferInfo)(DS_HANDLE, BUFFER_HANDLE handle, BUFFER_INFO_CMD cmd, INFO_DATATYPE *type, void *out, size_t *size)
 {
+    if (mode("progressive-pool")) {
+        auto *buffer = find_buffer(handle);
+        if (!buffer) return error(GC_ERR_INVALID_HANDLE);
+        if (cmd == BUFFER_INFO_BASE) return info(INFO_DATATYPE_PTR, buffer->data, type, out, size);
+        if (cmd == BUFFER_INFO_SIZE) return info(INFO_DATATYPE_SIZET, buffer->size, type, out, size);
+        if (cmd == BUFFER_INFO_IS_QUEUED) {
+            std::lock_guard lock(pool_queue_mutex);
+            return info(INFO_DATATYPE_BOOL8, bool8_t(buffer->queued), type, out, size);
+        }
+    }
     switch (cmd) {
     case BUFFER_INFO_BASE:
         return info(INFO_DATATYPE_PTR, announced_memory && !mode("caller-wrong-base") ?
@@ -738,6 +844,28 @@ EXPORT(EventGetData)(EVENT_HANDLE event_handle, void *out, size_t *size, uint64_
         const auto status = text("Width", static_cast<char *>(out), size);
         if (status == GC_ERR_SUCCESS) invalidation_pending = false;
         return status;
+    }
+    if (mode("progressive-pool")) {
+        if (!armed || event_handle != handle(7)) return error(GC_ERR_INVALID_HANDLE);
+        std::unique_lock lock(pool_queue_mutex, std::defer_lock);
+        if (timeout) lock.lock();
+        else if (!lock.try_lock()) return error(GC_ERR_TIMEOUT);
+        if (!pool.queued) {
+            lock.unlock();
+            std::this_thread::sleep_for(std::chrono::milliseconds(timeout));
+            return error(GC_ERR_TIMEOUT);
+        }
+        if (*size < sizeof(EVENT_NEW_BUFFER_DATA) || !out) return error(GC_ERR_BUFFER_TOO_SMALL);
+        auto *buffer = pool.queue[pool.head];
+        pool.head = (pool.head + 1) % pool.queue.size();
+        --pool.queued;
+        buffer->queued = false;
+        auto *image = static_cast<unsigned char *>(buffer->data);
+        for (size_t i = 0; i < pixels.size(); ++i) image[i] = static_cast<unsigned char>(i + 1);
+        const EVENT_NEW_BUFFER_DATA event{buffer, buffer->user};
+        std::memcpy(out, &event, sizeof(event));
+        *size = sizeof(event);
+        return GC_ERR_SUCCESS;
     }
     if (mode("io-event")) return error(GC_ERR_IO);
     if (mode("throw-event")) throw std::runtime_error("injected event exception");

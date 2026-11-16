@@ -14,6 +14,12 @@ caller-owned buffer to each, and verifies nonblocking capture while one
 stream restarts. The mock producer uses the GenTL header and needs no camera
 SDK. Iris still uses the EMVA GenApi runtime to load the mock's XML.
 
+Use `IRIS_FAULT=progressive-pool` for the mock's multi-buffer mode. It accepts
+up to 16 producer-allocated or caller-owned buffers and returns them in queue
+order. The optional `IRIS_MOCK_MIN_BUFFERS` sets the minimum reported by the
+producer. `IRIS_MOCK_EXPECT_BUFFERS` makes acquisition start fail unless
+the exact count has been announced.
+
 GitHub Actions runs this suite on pushes to `main`, pull requests, and a weekly
 schedule. CI runs both a normal build and a build with AddressSanitizer and
 UndefinedBehaviorSanitizer. Use `-DIRIS_SANITIZERS=ON` for a local
