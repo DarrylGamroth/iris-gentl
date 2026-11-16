@@ -327,6 +327,10 @@ iris_status_t iris_feature_alias(iris_node_map_t *map, const char *name, char *o
     constexpr auto operation = "feature alias";
     if (!size || (!out && *size)) return invalid(operation);
     return feature<GenApi::INode>(map, name, operation, [&](auto &node) {
+        // GenApi 3.5.0 can dereference a missing pAlias in GetAlias().
+        GenICam::gcstring value, attributes;
+        require(node.GetProperty("pAlias", value, attributes) && !value.empty(),
+                IRIS_NOT_FOUND, operation, "feature has no alias");
         auto *alias = node.GetAlias();
         require(alias, IRIS_NOT_FOUND, operation, "feature has no alias");
         return copy_text(alias->GetName().c_str(), out, size);

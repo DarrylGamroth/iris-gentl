@@ -7,12 +7,12 @@ stage=$2
 case "$target" in
     debian13|ubuntu24.10)
         if [[ $target == ubuntu24.10 ]]; then
-            sed -i -E 's|http://(archive|security)\.ubuntu\.com/ubuntu/|http://old-releases.ubuntu.com/ubuntu/|g' \
+            sed -i -E 's#http://(archive|security)\.ubuntu\.com/ubuntu/#http://old-releases.ubuntu.com/ubuntu/#g' \
                 /etc/apt/sources.list.d/ubuntu.sources
         fi
         apt-get update
         if [[ $stage == build ]]; then
-            apt-get install -y --no-install-recommends build-essential ca-certificates cmake libarchive-dev libxml2-dev
+            apt-get install -y --no-install-recommends build-essential ca-certificates cmake file libarchive-dev libxml2-dev
         else
             apt-get install -y --no-install-recommends gcc libc6-dev /work/release/*.deb
         fi
