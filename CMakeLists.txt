@@ -2,16 +2,10 @@ cmake_minimum_required(VERSION 3.18)
 project(iris VERSION 0.2.0 DESCRIPTION "Iris GenTL" LANGUAGES C CXX)
 include(GNUInstallDirs)
 include(CTest)
-find_path(GENTL_INCLUDE_DIR GenTL.h REQUIRED)
-find_path(GENAPI_INCLUDE_DIR GenApi/GenApi.h
-    HINTS ENV GENICAM_ROOT PATH_SUFFIXES library/CPP/include include REQUIRED)
-find_library(GENAPI_LIBRARY NAMES GenApi_gcc8_v3_5 GenApi_gcc54_v3_5 GenApi_gcc48_v3_5
-    HINTS ENV GENICAM_ROOT PATH_SUFFIXES bin/Linux64_x64 lib REQUIRED)
-find_library(GCBASE_LIBRARY NAMES GCBase_gcc8_v3_5 GCBase_gcc54_v3_5 GCBase_gcc48_v3_5
-    HINTS ENV GENICAM_ROOT PATH_SUFFIXES bin/Linux64_x64 lib REQUIRED)
 find_package(Threads REQUIRED)
 find_package(LibArchive REQUIRED)
 find_package(LibXml2 REQUIRED)
+include(cmake/Emva.cmake)
 add_library(iris SHARED
     src/chunk.cpp
     src/device.cpp
@@ -154,7 +148,7 @@ if(BUILD_TESTING)
                 --filter "${CMAKE_CURRENT_SOURCE_DIR}/inc/internal/"
                 --fail-under-line 90 --print-summary
                 ${CMAKE_BINARY_DIR}
-            DEPENDS iris-capture iris-failures iris-nodes iris-feature-browse iris-feature-batch iris-events iris-feature-values
+            DEPENDS iris-capture iris-failures iris-progressive iris-nodes iris-feature-browse iris-feature-batch iris-events iris-feature-values
                     iris-nonblocking iris-test-cti iris-example-features iris-example-configure-and-acquire
                     iris-example-software-trigger iris-payloads iris-write-stack
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})

@@ -1,6 +1,6 @@
 PROJECT_NAME           = "Iris GenTL"
 OUTPUT_DIRECTORY       = build-docs
-INPUT                  = inc/iris.h docs/guide.md README.md VERIFICATION.md \
+INPUT                  = inc/iris.h docs/guide.md README.md \
                          examples/README.md examples/features.c examples/configure_and_acquire.cpp \
                          examples/software_trigger.c
 USE_MDFILE_AS_MAINPAGE = docs/guide.md

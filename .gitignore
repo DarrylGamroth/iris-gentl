@@ -1,1 +1,6 @@
 /build*/
+/API_REVIEW.md
+/IMPLEMENTATION_PLAN.md
+/REVIEW.md
+/VERIFICATION.md
+/capture producer-cycle-*.log

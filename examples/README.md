@@ -37,7 +37,7 @@ The fixture reports `TriggerSoftware pending` on the first completion query. For
 
 [configure_and_acquire.cpp](configure_and_acquire.cpp) opens a camera by serial number, checks `ExposureTime` type and access, reports its limits and units, writes the requested exposure, and reads it back. It sets and reads back `AcquisitionMode=Continuous`, starts the stream, then polls in batches of four. The callback sees the frame only while Iris lends it. The example stops and closes the stream, device, and context.
 
-Run it with continuous simulator using the CTI directory and SDK3 runtime from the [fixture settings](../VERIFICATION.md):
+Run it with continuous simulator using the CTI directory and SDK3 runtime from the [simulator settings](../docs/guide.md#simulator-tests).
 
 ```sh
 export GENICAM_GENTL64_PATH="/path/to/continuous/cti${GENICAM_GENTL64_PATH:+:$GENICAM_GENTL64_PATH}"
@@ -62,4 +62,4 @@ trigger_fixture_GENTL_MOCK=1 trigger_fixture_ZERO_COPY=0 trigger_fixture_CLPROTO
   build/examples/iris-example-software-trigger trigger_fixture.cti
 ```
 
-To run it through CTest, configure `IRIS_triggered_CTI` and `IRIS_triggered_CLPROTOCOL` with the fixture paths from [VERIFICATION.md](../VERIFICATION.md), then run `ctest --test-dir build -R '^example-software-trigger$' --output-on-failure`. The example uses the triggered mock's copy path. Its native DMA ring requires an exact buffer count and rejects Iris's `TLParamsLocked` write once native buffers are announced.
+To run it through CTest, configure `IRIS_triggered_CTI` and `IRIS_triggered_CLPROTOCOL` as described in the [simulator settings](../docs/guide.md#simulator-tests), then run `ctest --test-dir build -R '^example-software-trigger$' --output-on-failure`. The example uses the triggered mock's copy path. Its native DMA ring requires an exact buffer count and rejects Iris's `TLParamsLocked` write once native buffers are announced.

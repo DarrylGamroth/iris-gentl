@@ -4,7 +4,20 @@ Iris GenTL is a Linux x86-64 C library for camera discovery, GenApi feature acce
 
 ## Build and install
 
-Use a C compiler, a C++17 compiler, and CMake 3.18 or newer. Download the GenTL 1.6 reference header and GenApi 3.5.1 SDK and runtime from EMVA. Follow the [build instructions](../README.md#obtain-the-emva-dependencies) to extract them and configure CMake. The [verification record](../VERIFICATION.md) lists the simulator inputs. [EMVA GenICam downloads archive](https://www.emva.org/standards-technology/genicam/genicam-downloads-archive/)
+Follow the [build instructions](../README.md#build-and-test) to configure CMake. The default configure step downloads any missing EMVA dependencies. To use a custom SDK layout, set `GENAPI_INCLUDE_DIR` and `CMAKE_LIBRARY_PATH` to the GenApi headers and runtime library directories.
+
+### Simulator tests
+
+The default CTest suite uses the mock CTI built by Iris. Configure these CMake options to add the triggered mock and continuous simulator tests.
+
+| CMake option | Input |
+| --- | --- |
+| `IRIS_triggered_CTI` | Mock-capable triggered GenTL producer file. |
+| `IRIS_triggered_CLPROTOCOL` | Matching synthetic triggered CLProtocol library file. |
+| `IRIS_continuous_CTI` | continuous SDK3 GenTL producer file with simulator support. |
+| `IRIS_continuous_RUNTIME` | Matching continuous SDK3 runtime directory. |
+
+Use a simulator runtime exposing serial `test-serial` and include the directory containing `ldconfig` in `PATH`. For consumer coverage, configure both simulators in a separate build directory with `-DIRIS_COVERAGE=ON` and run `cmake --build build-coverage --target coverage`. The gcovr target requires at least 90% line coverage.
 
 ## Environment
 
