@@ -30,9 +30,9 @@ ctest --test-dir build --output-on-failure
 - The default tests use the repository's mock CTI. Use the simulator options in
   [the user guide](docs/guide.md#simulator-tests) when a change needs triggered mock
   and continuous simulator coverage. Keep simulator and hardware results distinct.
-- For coverage builds, the CMake `coverage` target enforces 90% consumer line
-  coverage and 90% CLI line coverage. The public API reference can be checked with
-  `doxygen docs/Doxyfile`.
+- Put coverage build directories outside the workspace to keep gcov files there.
+  The CMake `coverage` target enforces 90% line coverage for both the consumer
+  and CLI. The public API reference can be checked with `doxygen docs/Doxyfile`.
 - CMake downloads the public EMVA dependencies and checks their hashes. Keep
   EMVA runtime binaries unmodified in release packages and include their
   notices. Verify package installation with the target distribution before

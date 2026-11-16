@@ -17,7 +17,23 @@ The default CTest suite uses the mock CTI built by Iris. Configure these CMake o
 | `IRIS_continuous_CTI` | continuous SDK3 GenTL producer file with simulator support. |
 | `IRIS_continuous_RUNTIME` | Matching continuous SDK3 runtime directory. |
 
-Use a simulator runtime exposing serial `test-serial` and include the directory containing `ldconfig` in `PATH`. For line coverage, configure both simulators in a separate build directory with `-DIRIS_COVERAGE=ON` and run `cmake --build build-coverage --target coverage`. The target requires at least 90% line coverage separately for the consumer and the CLI.
+Use a simulator runtime exposing serial `test-serial` and include the directory
+containing `ldconfig` in `PATH`.
+
+For line coverage, configure both simulators with the options above and use a
+build directory outside the workspace. For example, set the four simulator
+paths in the shell and run:
+
+```sh
+coverage_build=$(mktemp -d /tmp/iris-coverage.XXXXXX)
+cmake -S . -B "$coverage_build" -DIRIS_COVERAGE=ON \
+  -DIRIS_triggered_CTI="$IRIS_triggered_CTI" -DIRIS_triggered_CLPROTOCOL="$IRIS_triggered_CLPROTOCOL" \
+  -DIRIS_continuous_CTI="$IRIS_continuous_CTI" -DIRIS_continuous_RUNTIME="$IRIS_continuous_RUNTIME"
+cmake --build "$coverage_build" --target coverage --parallel
+```
+
+The coverage target keeps gcov data in that build directory and requires at
+least 90% line coverage separately for the consumer and the CLI.
 
 ## Environment
 
