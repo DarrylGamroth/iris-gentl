@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(iris VERSION 0.2.2 DESCRIPTION "Iris GenTL" LANGUAGES C CXX)
+project(iris VERSION 0.2.3 DESCRIPTION "Iris GenTL" LANGUAGES C CXX)
 include(GNUInstallDirs)
 include(CTest)
 option(IRIS_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)

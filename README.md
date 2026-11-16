@@ -21,7 +21,7 @@ the release's `SHA256SUMS`. [GitHub releases](https://github.com/DarrylGamroth/i
 | Ubuntu 24.10 amd64 | `*_ubuntu24.10_amd64.deb` | `sudo apt install ./iris-gentl_VERSION_ubuntu24.10_amd64.deb` |
 | CentOS 7.9 x86-64 | `*-centos7.9-x86_64.tar.gz` | Extract into a directory of your choice. Run `bin/iris-capture` from the extracted prefix. |
 
-The v0.2.2 packages include `libiris`, `iris.h`, `iris-capture`, `iris-gentl`,
+The v0.2.3 packages include `libiris`, `iris.h`, `iris-capture`, `iris-gentl`,
 and EMVA's unmodified GenApi runtime with its notices. The Debian and Ubuntu packages use GenApi
 3.5.1. The CentOS tarball uses GenApi 3.5.0 for glibc 2.17 and requires the
 CentOS `libarchive`, `libxml2`, and `libstdc++` runtime packages. Supply the
