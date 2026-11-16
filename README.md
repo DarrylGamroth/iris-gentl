@@ -4,6 +4,7 @@ Iris GenTL is a GenTL Consumer for discovering and controlling cameras and acqui
 
 - Use bounded callback polling, immediate receive, or a finite blocking wait.
 - Receive borrowed image buffers without a per-frame copy or consumer heap allocation during normal acquisition after start.
+- Poll for completed rows on producers that expose a stable, CPU-visible image prefix.
 - Use typed GenApi access for camera, device, interface, system, and stream node maps.
 - Browse feature categories and selector relationships, supply host buffers, and inspect GenTL payload metadata.
 
@@ -46,6 +47,8 @@ cmake --install build --prefix /path/to/install
 ```
 
 For a custom SDK layout, set `GENAPI_INCLUDE_DIR` and `CMAKE_LIBRARY_PATH` explicitly. The [environment settings](docs/guide.md#environment) cover CTI lookup, the GenApi cache, and runtime library paths.
+
+GitHub Actions builds and runs the mock CTI tests on Linux x86-64 for pushes and pull requests targeting `main`. The workflow verifies the public EMVA downloads before using them.
 
 To enable the simultaneous simulator test, configure `IRIS_triggered_CTI`, `IRIS_triggered_CLPROTOCOL`, `IRIS_continuous_CTI`, and `IRIS_continuous_RUNTIME` with the paths in [VERIFICATION.md](VERIFICATION.md). Configure both simulators in a separate build directory with `-DIRIS_COVERAGE=ON`, then run `cmake --build build-coverage --target coverage`. The target uses gcovr and requires at least 90% line coverage of consumer sources.
 

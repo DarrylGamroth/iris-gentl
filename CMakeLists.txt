@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(iris VERSION 0.1.0 DESCRIPTION "Iris GenTL" LANGUAGES C CXX)
+project(iris VERSION 0.2.0 DESCRIPTION "Iris GenTL" LANGUAGES C CXX)
 include(GNUInstallDirs)
 include(CTest)
 find_path(GENTL_INCLUDE_DIR GenTL.h REQUIRED)

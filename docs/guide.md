@@ -118,6 +118,12 @@ Iris attaches the validated chunks only during each browse or read. The frame mu
 
 Process a borrowed image before release, or copy it into application-owned storage if it must outlive the borrow. The descriptor's token belongs to the issuing stream. A valid release consumes the borrow even if requeue fails. If requeue fails, stop the stream to recover. After stop, frames already borrowed remain valid until released.
 
+### Poll rows during acquisition
+
+Use `iris_stream_poll_rows` only when the producer guarantees that the fill count on an acquiring buffer identifies contiguous bytes that are already visible to the CPU and remain stable until requeue. The supported layout is contiguous little-endian Mono10, Mono12, Mono14, or Mono16 in unpacked 16-bit storage, with zero image offset and no padding or chunks.
+
+Supply an `iris_row_target_t` with application-owned storage separate from the announced buffers. Keep the destination and geometry fixed until a successful update sets `complete`. Each successful update reports the first row and count copied during that call. Completion can report zero new rows if an earlier poll copied the entire image. Treat `IRIS_NO_FRAME` as an empty poll. If an error invalidates a partial frame, discard its published rows and stop the stream before switching destinations.
+
 ### Poll multiple streams
 
 Call the following from the reader after starting both streams. Schedule the next iteration with the application's idle policy when both delivery counts are zero.
