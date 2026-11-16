@@ -32,3 +32,42 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
           cmake --build build --parallel
           ctest --test-dir build --output-on-failure --no-tests=error
+
+  coverage:
+    name: Mock CTI coverage
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install coverage dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-dev libxml2-dev gcovr
+
+      - name: Build, test, and collect coverage
+        run: |
+          coverage_build="$RUNNER_TEMP/iris-coverage"
+          cmake -S . -B "$coverage_build" -DBUILD_TESTING=ON -DIRIS_COVERAGE=ON
+          cmake --build "$coverage_build" --parallel
+          ctest --test-dir "$coverage_build" --output-on-failure --no-tests=error
+          gcovr --root "$GITHUB_WORKSPACE" --filter '^src/' --filter '^inc/internal/' --filter '^tools/' \
+            --cobertura "$RUNNER_TEMP/iris-coverage.xml" --print-summary "$coverage_build"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+          files: ${{ runner.temp }}/iris-coverage.xml
+          disable_search: true
+          plugins: noop
+          fail_ci_if_error: true
