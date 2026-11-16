@@ -50,6 +50,35 @@ run_cli("^1$" "no device matches" get --cti "${CTI}" --serial missing Width)
 run_cli("^2$" "expected NAME=VALUE" set --cti "${CTI}" Width)
 run_cli("^2$" "invalid count" grab --cti "${CTI}" 0)
 
+set(before "${CMAKE_CURRENT_BINARY_DIR}/iris-before-${suffix}.snapshot")
+set(after "${CMAKE_CURRENT_BINARY_DIR}/iris-after-${suffix}.snapshot")
+set(other "${CMAKE_CURRENT_BINARY_DIR}/iris-other-${suffix}.snapshot")
+run_cli("^0$" "iris-gentl snapshot 1" snapshot --cti "${CTI}"
+    --set [=[DeviceUserID=iris"test\one]=] Width DeviceUserID)
+file(WRITE "${before}" "${cli_output}")
+run_cli("^0$" "iris-gentl snapshot 1" snapshot --cti "${CTI}"
+    --set [=[DeviceUserID=iris"test\one]=] --set Width=48 DeviceUserID Width)
+file(WRITE "${after}" "${cli_output}")
+run_cli("^0$" "^$" diff "${before}" "${before}")
+run_cli("^1$" "changed remote/Width before=\"16\" after=\"48\"" diff "${before}" "${after}")
+run_cli("^1$" "\"change\":\"changed\",\"before\":\"16\",\"after\":\"48\"" diff "${before}" "${after}" --json)
+file(WRITE "${other}" "bad header\n")
+run_cli("^2$" "invalid snapshot header" diff "${before}" "${other}")
+file(WRITE "${other}" "iris-gentl snapshot 1\n\"remote\"\t\"Width\"\t1\t")
+run_cli("^2$" "invalid quoted field" diff "${before}" "${other}")
+
+set(ENV{IRIS_FAULT} progressive-controls)
+run_cli("^0$" "\"TriggerSelector\".*\"FrameStart\"" snapshot --cti "${CTI}"
+    --set TriggerSelector=FrameStart TriggerMode)
+file(WRITE "${before}" "${cli_output}")
+run_cli("^0$" "\"TriggerSelector\".*\"ExposureStart\"" snapshot --cti "${CTI}"
+    --set TriggerSelector=ExposureStart TriggerMode)
+file(WRITE "${after}" "${cli_output}")
+run_cli("^1$" "added remote/TriggerMode TriggerSelector=\"ExposureStart\".*removed remote/TriggerMode TriggerSelector=\"FrameStart\""
+    diff "${before}" "${after}")
+run_cli("^0$" "\"selectors\":\\{\"TriggerSelector\":\"FrameStart\"\\}" snapshot --cti "${CTI}" TriggerMode --json)
+file(REMOVE "${before}" "${after}" "${other}")
+
 set(ENV{IRIS_FAULT} events)
 run_cli("^0$" "event=1234 bytes=" event --cti "${CTI}" --timeout 100)
 run_cli("^0$" "\"event\":\"1234\"" event --cti "${CTI}" --json)

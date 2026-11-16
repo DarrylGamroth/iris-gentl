@@ -32,6 +32,8 @@ constexpr char usage[] =
     "  set NAME=VALUE ...  Write features in order\n"
     "  exec NAME        Execute a GenApi command\n"
     "  xml              Write the active node-map XML to stdout\n"
+    "  snapshot NAME ...  Save feature values with their current selector settings\n"
+    "  diff BEFORE AFTER  Compare two snapshots\n"
     "  event [COUNT]    Print GenTL events (default: 1)\n"
     "  grab [COUNT]     Receive complete images (default: 1)\n"
     "\n"
@@ -419,8 +421,16 @@ bool run(std::string_view command, const Options &options)
     const bool set = command == "set";
     if (command == "features" || grabbing || events) {
         if (args.size() > 1) throw std::invalid_argument("too many command arguments");
-    } else if (command == "get" || set) {
+    } else if (command == "get" || command == "snapshot" || set) {
         if (args.empty()) throw std::invalid_argument("feature arguments are required");
+    } else if (command == "diff") {
+        if (args.size() != 2) throw std::invalid_argument("diff requires two snapshot paths");
+        if (!options.producers.empty() || !options.assignments.empty() || !options.serial.empty() ||
+            !options.interface.empty() || !options.device.empty() || options.module != "remote" ||
+            options.stream || options.timeout != 1000 || options.buffers || options.stream_only ||
+            !options.output.empty() || !options.trigger.empty())
+            throw std::invalid_argument("diff accepts only two paths and --json");
+        return diff_snapshots(args[0], args[1], options.json);
     } else if (command == "exec" || command == "describe") {
         if (args.size() != 1) throw std::invalid_argument(std::string(command) + " requires one feature name");
     } else if (info || command == "xml") {
@@ -452,6 +462,9 @@ bool run(std::string_view command, const Options &options)
 
     if (command == "features") list_features(map, args, options.json);
     else if (command == "describe") describe(map, args.front(), options.json);
+    else if (command == "snapshot")
+        snapshot(map, options.module == "stream" ? "stream[" + std::to_string(options.stream) + "]"
+                                                 : options.module, args, options.json);
     else if (command == "get") read_features(map, args, options.json);
     else if (set) write_features(map, args);
     else if (command == "exec") check(iris_feature_execute(map, args.front().c_str()), args.front().c_str());
@@ -476,7 +489,8 @@ int main(int argc, char **argv)
         }
     }
     try {
-        return run(argv[1], parse(argc, argv)) && std::fflush(stdout) == 0 ? 0 : 1;
+        const bool ok = run(argv[1], parse(argc, argv));
+        return std::fflush(stdout) == 0 && ok ? 0 : 1;
     } catch (const gentl::operation_failed &) {
         return 1;
     } catch (const std::invalid_argument &error) {

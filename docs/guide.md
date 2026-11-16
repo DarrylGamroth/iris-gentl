@@ -65,8 +65,27 @@ iris-gentl grab 3 --cti producer.cti --timeout 1000 --output frames.raw
 Run `iris-gentl --help` for the complete option list.
 
 Use `--json` for newline-delimited JSON output from `info`, `features`,
-`describe`, `get`, `event`, and `grab`. GenApi values returned by `get`
-use the GenApi text representation.
+`describe`, `get`, `snapshot`, `diff`, `event`, and `grab`. GenApi values
+returned by `get` and `snapshot` use the GenApi text representation.
+
+### Compare camera settings
+
+`snapshot NAME ...` records the selected module, requested feature values,
+and current direct and indirect selector values. Use `--set` to choose the
+bank before reading it. Run one snapshot for each selector configuration
+you need to inspect.
+
+```sh
+iris-gentl snapshot --cti producer.cti Width Height > before.snapshot
+iris-gentl snapshot --cti producer.cti Width Height > after.snapshot
+iris-gentl diff before.snapshot after.snapshot
+```
+
+`diff` reads the default snapshot file format and compares entries by module,
+feature name, and selector values. A different selector context appears as a
+removed entry and an added entry. The exit code is 0 for matching snapshots,
+1 for differences, and 2 for an invalid input file. Use `diff --json` for
+machine-readable changes.
 
 ## Discovery and ownership
 
