@@ -7,6 +7,18 @@ function(run_cli status_pattern output_pattern)
     set(cli_output "${output}" PARENT_SCOPE)
 endfunction()
 
+set(complete "complete=3 incomplete=0 unsupported_payload=0 invalid_image=0 timeouts=0.*interval_samples=2")
+if(SIMULATOR STREQUAL "continuous")
+    run_cli("^0$" "${complete}" play 3 --cti "${CTI}"
+        --serial test-serial --timeout 2000 --set AcquisitionMode=Continuous)
+    return()
+elseif(SIMULATOR STREQUAL "triggered")
+    run_cli("^0$" "${complete}" play 3 --cti "${CTI}" --stream-only --trigger TriggerSoftware
+        --set TriggerSelector=FrameStart --set TriggerMode=Off
+        --set TriggerSource=Software --set TriggerMode=On)
+    return()
+endif()
+
 get_filename_component(cti_name "${CTI}" NAME)
 string(RANDOM LENGTH 12 suffix)
 set(scan_dir "${CMAKE_CURRENT_BINARY_DIR}/iris-gentl-${suffix}")
@@ -26,6 +38,10 @@ run_cli("^0$" "Range: 100 to 1000 us" describe --cti "${CTI}" ExposureTime)
 set(ENV{IRIS_FAULT} nodes)
 run_cli("^1$" "multiple devices match" describe --cti "${CTI}" DeviceUserID)
 run_cli("^0$" "Maximum length: 16" describe --cti "${CTI}" --interface test-interface --device test-device --set DeviceUserID=iris-demo DeviceUserID)
+run_cli("^0$" "\"values\":\\[16,32,64\\]" describe --cti "${CTI}"
+    --interface test-interface --device test-device WidthRaw --json)
+run_cli("^0$" "Values:\n  1\n  2\n  4" describe --cti "${CTI}"
+    --interface test-interface --device test-device WidthScaled)
 set(ENV{IRIS_FAULT} example)
 run_cli("^0$" "\"increment\":16" describe --cti "${CTI}" Width --json)
 run_cli("^0$" "\"choices\".*\"selectors\":\\[\"TriggerSelector\"\\]"
@@ -41,6 +57,9 @@ if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.19")
         message(FATAL_ERROR "Unexpected JSON string value: ${value}")
     endif()
 endif()
+string(ASCII 255 invalid_utf8)
+run_cli("^0$" [=["value":"é漢📷\\u0009\\u00ff"]=] get --cti "${CTI}" --json
+    --set "DeviceUserID=é漢📷\t${invalid_utf8}" DeviceUserID)
 run_cli("^0$" "TriggerMode=On" get --cti "${CTI}"
     --set TriggerSelector=FrameStart --set TriggerMode=On TriggerMode)
 run_cli("^0$" "^$" set --cti "${CTI}" DeviceUserID=iris-demo)
@@ -81,7 +100,9 @@ file(REMOVE "${before}" "${after}" "${other}")
 
 set(ENV{IRIS_FAULT} events)
 run_cli("^0$" "event=1234 bytes=" event --cti "${CTI}" --timeout 100)
-run_cli("^0$" "\"event\":\"1234\"" event --cti "${CTI}" --json)
+run_cli("^0$" [=["event":"1234".*"name":"EventExposureEndTimestamp","type":"integer","status":-14]=]
+    event --cti "${CTI}" --json)
+run_cli("^0$" "EventExposureEndTimestamp: Iris status -14" event --cti "${CTI}")
 
 set(ENV{IRIS_FAULT} progressive-complete)
 run_cli("^0$" "\"width\":2" grab --cti "${CTI}" --stream-only --buffers 1 --json)

@@ -31,7 +31,7 @@ ctest --test-dir build --output-on-failure
   [the user guide](docs/guide.md#simulator-tests) when a change needs triggered mock
   and continuous simulator coverage. Keep simulator and hardware results distinct.
 - For coverage builds, the CMake `coverage` target enforces 90% consumer line
-  coverage. The public API reference can be checked with
+  coverage and 90% CLI line coverage. The public API reference can be checked with
   `doxygen docs/Doxyfile`.
 - CMake downloads the public EMVA dependencies and checks their hashes. Keep
   EMVA runtime binaries unmodified in release packages and include their

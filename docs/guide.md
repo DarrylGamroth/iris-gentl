@@ -17,7 +17,7 @@ The default CTest suite uses the mock CTI built by Iris. Configure these CMake o
 | `IRIS_continuous_CTI` | continuous SDK3 GenTL producer file with simulator support. |
 | `IRIS_continuous_RUNTIME` | Matching continuous SDK3 runtime directory. |
 
-Use a simulator runtime exposing serial `test-serial` and include the directory containing `ldconfig` in `PATH`. For consumer coverage, configure both simulators in a separate build directory with `-DIRIS_COVERAGE=ON` and run `cmake --build build-coverage --target coverage`. The gcovr target requires at least 90% line coverage.
+Use a simulator runtime exposing serial `test-serial` and include the directory containing `ldconfig` in `PATH`. For line coverage, configure both simulators in a separate build directory with `-DIRIS_COVERAGE=ON` and run `cmake --build build-coverage --target coverage`. The target requires at least 90% line coverage separately for the consumer and the CLI.
 
 ## Environment
 
@@ -34,14 +34,15 @@ Use a simulator runtime exposing serial `test-serial` and include the directory 
 
 `iris-gentl info` lists camera identities across the CTIs on
 `GENICAM_GENTL64_PATH`. Repeat `--cti` to query specific producers.
-commands use one CTI and require a unique device. Select by `--serial`, or
-use the `--interface` and `--device` IDs shown by `info`.
+Camera commands use one CTI and require a unique device. Select by
+`--serial`, or use the `--interface` and `--device` IDs shown by `info`.
 
 ```sh
 iris-gentl get --cti producer.cti Width Height PixelFormat
 iris-gentl get --cti producer.cti --set TriggerSelector=FrameStart TriggerSource
 iris-gentl xml --cti producer.cti > camera.xml
 iris-gentl grab 3 --cti producer.cti --timeout 1000 --output frames.raw
+iris-gentl play 100 --cti producer.cti --timeout 1000 --json
 ```
 
 - `features [GLOB]` lists feature names, principal types, and current access
@@ -53,20 +54,33 @@ iris-gentl grab 3 --cti producer.cti --timeout 1000 --output frames.raw
   select the feature and any nodes that the feature selects.
 - `--module` selects `remote`, `device`, `interface`, `system`, or `stream`
   for node-map commands. `xml` writes the active description to stdout.
-- `event [COUNT]` subscribes to the selected map and prints event IDs and
-  payload sizes. Set the camera's event configuration with `--set` when needed.
+- `event [COUNT]` subscribes to the selected map and prints event IDs,
+  payload sizes, available timestamps, and the GenApi features captured for
+  each event. The host timestamp is monotonic time at dequeue in nanoseconds.
+  The device timestamp uses the device's units and epoch. Set the camera's
+  event configuration with `--set` when needed.
 - `grab [COUNT]` uses current camera settings and prints frame dimensions,
   PFNC format, stride, and byte count. A new `--output` file contains the raw
   bytes of each complete image in order, including row padding. The command
   stops on a rejected image or timeout. Use `--stream-only` to leave remote
   acquisition under external control, and `--trigger NAME` to issue a remote
   command before each wait.
+- `play [COUNT]` summarizes capture over a fixed number of waits (100 by
+  default). It reports complete, incomplete, unsupported, and invalid
+  completions, timeouts, and elapsed capture time. When timestamps are
+  available, it reports the minimum, mean, and maximum host dequeue interval
+  between complete frames. Intervals can include time spent waiting for
+  rejected or missing frames. A completed run returns 0 even when it counts
+  timeouts or rejected frames. It accepts the same acquisition settings as
+  `grab`.
 
 Run `iris-gentl --help` for the complete option list.
 
 Use `--json` for newline-delimited JSON output from `info`, `features`,
-`describe`, `get`, `snapshot`, `diff`, `event`, and `grab`. GenApi values
-returned by `get` and `snapshot` use the GenApi text representation.
+`describe`, `get`, `snapshot`, `diff`, `event`, `grab`, and `play`.
+Feature values in `get`, `snapshot`, and `event` use the GenApi text
+representation. Event timestamps are JSON integers. Use an integer-capable
+JSON parser to preserve all 64 bits.
 
 ### Compare camera settings
 

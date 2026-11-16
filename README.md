@@ -70,7 +70,8 @@ build/iris-gentl grab --cti producer.cti --serial CAMERA_SERIAL
 ```
 
 See the [command-line guide](docs/guide.md#command-line-tool) for feature
-configuration, XML export, event inspection, and raw frame output.
+configuration, snapshot comparison, event decoding, raw frame output, and
+capture diagnostics.
 
 ## Documentation
 

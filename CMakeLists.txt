@@ -41,7 +41,7 @@ option(IRIS_TRACE_INVALID_IMAGE "Print raw GenTL metadata for rejected images" O
 if(IRIS_TRACE_INVALID_IMAGE)
     target_compile_definitions(iris PRIVATE IRIS_TRACE_INVALID_IMAGE)
 endif()
-option(IRIS_COVERAGE "Instrument the consumer for gcov" OFF)
+option(IRIS_COVERAGE "Instrument the consumer and CLI for gcov" OFF)
 if(IRIS_COVERAGE)
     target_compile_options(iris PRIVATE --coverage -O0 -g)
     target_link_options(iris PRIVATE --coverage)
@@ -54,6 +54,10 @@ add_executable(iris-gentl tools/gentl.cpp tools/gentl_features.cpp)
 target_compile_features(iris-gentl PRIVATE cxx_std_17)
 target_compile_options(iris-gentl PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(iris-gentl PRIVATE iris Threads::Threads)
+if(IRIS_COVERAGE)
+    target_compile_options(iris-gentl PRIVATE --coverage -O0 -g)
+    target_link_options(iris-gentl PRIVATE --coverage)
+endif()
 install(TARGETS iris-gentl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(IRIS_BUNDLE_GENAPI)
     include(cmake/BinaryPackage.cmake)
@@ -72,6 +76,12 @@ if(BUILD_TESTING)
         set_tests_properties(example-configure-and-acquire PROPERTIES TIMEOUT 15
             RESOURCE_LOCK continuous-simulator ENVIRONMENT
             "GENICAM_GENTL64_PATH=${continuous_dir};LD_LIBRARY_PATH=${IRIS_continuous_RUNTIME}:$ENV{LD_LIBRARY_PATH}")
+        add_test(NAME gentl-cli-continuous-play COMMAND "${CMAKE_COMMAND}"
+            "-DCLI=$<TARGET_FILE:iris-gentl>" "-DCTI=${continuous_cti}" -DSIMULATOR=continuous
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/gentl_cli.cmake")
+        set_tests_properties(gentl-cli-continuous-play PROPERTIES TIMEOUT 15
+            RESOURCE_LOCK continuous-simulator ENVIRONMENT
+            "GENICAM_GENTL64_PATH=${continuous_dir};LD_LIBRARY_PATH=${IRIS_continuous_RUNTIME}:$ENV{LD_LIBRARY_PATH}")
     endif()
     if(IRIS_triggered_CTI AND IRIS_triggered_CLPROTOCOL)
         get_filename_component(triggered_dir "${IRIS_triggered_CTI}" DIRECTORY)
@@ -85,6 +95,11 @@ if(BUILD_TESTING)
             --set TriggerMode=Off --set TriggerSource=Software --set TriggerMode=On)
         set_tests_properties(gentl-cli-software-trigger PROPERTIES TIMEOUT 10
             PASS_REGULAR_EXPRESSION "frame=2 width="
+            ENVIRONMENT "${triggered_mock_environment};GENICAM_GENTL64_PATH=${triggered_dir};trigger_fixture_ZERO_COPY=0")
+        add_test(NAME gentl-cli-triggered-play COMMAND "${CMAKE_COMMAND}"
+            "-DCLI=$<TARGET_FILE:iris-gentl>" "-DCTI=${triggered_cti}" -DSIMULATOR=triggered
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/gentl_cli.cmake")
+        set_tests_properties(gentl-cli-triggered-play PROPERTIES TIMEOUT 10
             ENVIRONMENT "${triggered_mock_environment};GENICAM_GENTL64_PATH=${triggered_dir};trigger_fixture_ZERO_COPY=0")
     endif()
     if(IRIS_triggered_CTI AND IRIS_triggered_CLPROTOCOL AND IRIS_continuous_CTI)
@@ -167,6 +182,9 @@ if(BUILD_TESTING)
                 --filter "${CMAKE_CURRENT_SOURCE_DIR}/inc/internal/"
                 --fail-under-line 90 --print-summary
                 ${CMAKE_BINARY_DIR}
+            COMMAND ${GCOVR} --root ${CMAKE_CURRENT_SOURCE_DIR}
+                --filter "${CMAKE_CURRENT_SOURCE_DIR}/tools/"
+                --fail-under-line 90 --print-summary ${CMAKE_BINARY_DIR}
             DEPENDS iris-capture iris-gentl iris-failures iris-progressive iris-nodes iris-feature-browse iris-feature-batch iris-events iris-feature-values
                     iris-nonblocking iris-test-cti iris-example-features iris-example-configure-and-acquire
                     iris-example-software-trigger iris-payloads iris-write-stack
