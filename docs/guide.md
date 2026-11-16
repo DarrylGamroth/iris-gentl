@@ -14,8 +14,9 @@ caller-owned buffer to each, and verifies nonblocking capture while one
 stream restarts. The mock producer uses the GenTL header and needs no camera
 SDK. Iris still uses the EMVA GenApi runtime to load the mock's XML.
 
-GitHub Actions runs this suite in a normal build and with AddressSanitizer
-and UndefinedBehaviorSanitizer. Use `-DIRIS_SANITIZERS=ON` for a local
+GitHub Actions runs this suite on pushes to `main`, pull requests, and a weekly
+schedule. CI runs both a normal build and a build with AddressSanitizer and
+UndefinedBehaviorSanitizer. Use `-DIRIS_SANITIZERS=ON` for a local
 sanitizer build. The normal build measures heap allocations because ASan
 supplies its own allocator interceptors.
 
