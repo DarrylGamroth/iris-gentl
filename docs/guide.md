@@ -48,6 +48,9 @@ iris-gentl grab 3 --cti producer.cti --timeout 1000 --output frames.raw
   modes. `get` reads values, `set NAME=VALUE ...` applies writes in the given
   order, and `exec NAME` issues a command. `--set` applies ordered writes
   before the selected operation. Writes take effect immediately.
+- `describe NAME` shows the node's access, limits and units, increment mode,
+  enum entries, or string length as applicable. It lists the nodes that
+  select the feature and any nodes that the feature selects.
 - `--module` selects `remote`, `device`, `interface`, `system`, or `stream`
   for node-map commands. `xml` writes the active description to stdout.
 - `event [COUNT]` subscribes to the selected map and prints event IDs and
@@ -60,6 +63,10 @@ iris-gentl grab 3 --cti producer.cti --timeout 1000 --output frames.raw
   command before each wait.
 
 Run `iris-gentl --help` for the complete option list.
+
+Use `--json` for newline-delimited JSON output from `info`, `features`,
+`describe`, `get`, `event`, and `grab`. GenApi values returned by `get`
+use the GenApi text representation.
 
 ## Discovery and ownership
 

@@ -1,5 +1,8 @@
 #include <iris.h>
 
+#include "gentl_features.hpp"
+#include "gentl_output.hpp"
+
 #include <charconv>
 #include <chrono>
 #include <cinttypes>
@@ -18,11 +21,13 @@
 namespace {
 namespace fs = std::filesystem;
 using namespace std::chrono_literals;
+using namespace gentl;
 
 constexpr char usage[] =
     "Usage: iris-gentl COMMAND [OPTIONS] [ARGS]\n"
     "  info             List devices and their GenTL IDs\n"
     "  features [GLOB]  List GenApi features, types and access modes\n"
+    "  describe NAME    Show feature limits, choices and selector dependencies\n"
     "  get NAME ...     Read feature values\n"
     "  set NAME=VALUE ...  Write features in order\n"
     "  exec NAME        Execute a GenApi command\n"
@@ -43,8 +48,11 @@ constexpr char usage[] =
     "  --stream-only    Grab without issuing remote start and stop\n"
     "  --trigger NAME   Execute a remote command before each grab\n"
     "  --output FILE    Save grabbed image bytes, including padding, in order\n"
+    "  --json           Write one JSON object per result\n"
     "  -h, --help       Show help\n";
+} // namespace
 
+namespace gentl {
 bool report(iris_status_t status, const char *operation)
 {
     if (status == IRIS_OK) return true;
@@ -61,7 +69,9 @@ void check(iris_status_t status, const char *operation)
 {
     if (!report(status, operation)) throw operation_failed{};
 }
+} // namespace gentl
 
+namespace {
 struct Camera {
     iris_context_t *context = nullptr;
     iris_device_t *device = nullptr;
@@ -114,7 +124,7 @@ struct Options {
     uint64_t timeout = 1000;
     size_t stream = 0;
     uint32_t buffers = 0;
-    bool stream_only = false;
+    bool stream_only = false, json = false;
 };
 
 Options parse(int argc, char **argv)
@@ -129,6 +139,7 @@ Options parse(int argc, char **argv)
             continue;
         }
         if (arg == "--stream-only") { options.stream_only = true; continue; }
+        if (arg == "--json") { options.json = true; continue; }
         const auto equals = arg.find('=');
         const auto flag = arg.substr(0, equals);
         const auto value = equals != arg.npos ? arg.substr(equals + 1)
@@ -200,7 +211,7 @@ bool list_devices(Camera &camera, const Options &options)
     const auto producers = options.producers.empty() ? installed_producers() : options.producers;
     if (producers.empty()) throw std::invalid_argument("supply --cti or set GENICAM_GENTL64_PATH");
     bool ok = true;
-    std::puts("CTI\tINTERFACE\tDEVICE\tSERIAL\tVENDOR\tMODEL\tTRANSPORT");
+    if (!options.json) std::puts("CTI\tINTERFACE\tDEVICE\tSERIAL\tVENDOR\tMODEL\tTRANSPORT");
     for (const auto &producer : producers) {
         Devices devices;
         if (!report(iris_discover(camera.context, producer.c_str(), options.timeout, &devices.list),
@@ -210,7 +221,18 @@ bool list_devices(Camera &camera, const Options &options)
         }
         for (size_t i = 0; i < iris_device_list_count(devices.list); ++i) {
             const auto info = device_info(devices, i);
-            if (matches(info, options))
+            if (!matches(info, options)) continue;
+            if (options.json) {
+                Json entry;
+                entry.string("cti", info.producer_path);
+                entry.string("interface", info.interface_id);
+                entry.string("device", info.device_id);
+                if (info.serial_number) entry.string("serial", info.serial_number);
+                if (info.vendor) entry.string("vendor", info.vendor);
+                if (info.model) entry.string("model", info.model);
+                if (info.tl_type) entry.string("transport", info.tl_type);
+                entry.print();
+            } else
                 std::printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n", text(info.producer_path),
                             text(info.interface_id), text(info.device_id), text(info.serial_number),
                             text(info.vendor), text(info.model), text(info.tl_type));
@@ -275,34 +297,39 @@ void write_features(iris_node_map_t *map, const std::vector<std::string> &assign
     }
 }
 
-void list_features(iris_node_map_t *map, const std::vector<std::string> &args)
+void list_features(iris_node_map_t *map, const std::vector<std::string> &args, bool json)
 {
     const iris_feature_filter_t filter{args.empty() ? nullptr : args.front().c_str(),
                                        IRIS_FEATURE_MATCH_GLOB, 0, 0};
     Features features;
     check(iris_node_map_list_features(map, &filter, &features.list), "list features");
-    const char *types[] = {"-", "integer", "float", "boolean", "enumeration", "string",
-                           "command", "other", "category", "register"};
-    const char *access[] = {"-", "NI", "NA", "WO", "RO", "RW"};
-    std::puts("NAME\tTYPE\tACCESS\tDISPLAY NAME");
+    if (!json) std::puts("NAME\tTYPE\tACCESS\tDISPLAY NAME");
     for (size_t i = 0; i < iris_feature_list_count(features.list); ++i) {
         iris_feature_entry_t entry{};
         check(iris_feature_list_get(features.list, i, &entry), "read feature entry");
-        const auto type = static_cast<size_t>(entry.info.type);
-        const auto mode = static_cast<size_t>(entry.info.access);
-        std::printf("%s\t%s\t%s\t%s\n", entry.name, type < std::size(types) ? types[type] : "-",
-                    mode < std::size(access) ? access[mode] : "-", text(entry.display_name));
+        if (json) {
+            Json object;
+            object.string("name", entry.name);
+            object.string("type", feature_type(entry.info.type));
+            object.string("access", feature_access(entry.info.access));
+            object.string("display_name", text(entry.display_name));
+            object.print();
+        } else
+            std::printf("%s\t%s\t%s\t%s\n", entry.name, feature_type(entry.info.type),
+                        feature_access(entry.info.access), text(entry.display_name));
     }
 }
 
-void read_features(iris_node_map_t *map, const std::vector<std::string> &names)
+void read_features(iris_node_map_t *map, const std::vector<std::string> &names, bool json)
 {
     for (const auto &name : names) {
-        size_t size = 0;
-        check(iris_feature_to_string(map, name.c_str(), nullptr, &size), name.c_str());
-        std::vector<char> value(size);
-        check(iris_feature_to_string(map, name.c_str(), value.data(), &size), name.c_str());
-        std::printf("%s=%s\n", name.c_str(), value.data());
+        const auto value = read_feature(map, name.c_str());
+        if (json) {
+            Json object;
+            object.string("name", name);
+            object.string("value", value);
+            object.print();
+        } else std::printf("%s=%s\n", name.c_str(), value.c_str());
     }
 }
 
@@ -316,11 +343,11 @@ void export_xml(iris_node_map_t *map)
         throw std::runtime_error("could not write XML");
 }
 
-void receive_events(iris_node_map_t *map, uint64_t count, uint64_t timeout)
+void receive_events(iris_node_map_t *map, uint64_t count, const Options &options)
 {
     check(iris_node_map_enable_events(map, 1), "subscribe to events");
     for (uint64_t i = 0; i < count; ++i) {
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(options.timeout);
         iris_node_map_event_t event{};
         auto status = iris_node_map_try_get_event(map, &event);
         while (status == IRIS_NO_EVENT && std::chrono::steady_clock::now() < deadline) {
@@ -329,7 +356,12 @@ void receive_events(iris_node_map_t *map, uint64_t count, uint64_t timeout)
         }
         if (status == IRIS_NO_EVENT) throw std::runtime_error("timed out waiting for a GenTL event");
         check(status, "receive event");
-        std::printf("event=%s bytes=%zu\n", event.id, event.data_size);
+        if (options.json) {
+            Json object;
+            object.string("event", event.id);
+            object.number("bytes", event.data_size);
+            object.print();
+        } else std::printf("event=%s bytes=%zu\n", event.id, event.data_size);
     }
     check(iris_node_map_enable_events(map, 0), "unsubscribe from events");
 }
@@ -359,9 +391,19 @@ void grab(Camera &camera, iris_node_map_t *map, const Options &options, uint64_t
                                      std::to_string(info.status) + ")");
         if (output && std::fwrite(info.data, 1, info.image_size, output.get()) != info.image_size)
             throw std::runtime_error("could not write image to " + options.output);
-        std::printf("frame=%" PRIu64 " width=%" PRIu64 " height=%" PRIu64
-                    " pfnc=0x%" PRIx64 " stride=%zu bytes=%zu\n",
-                    i + 1, info.width, info.height, info.pixel_format, info.stride_bytes, info.image_size);
+        if (options.json) {
+            Json object;
+            object.number("frame", i + 1);
+            object.number("width", info.width);
+            object.number("height", info.height);
+            object.number("pfnc", info.pixel_format);
+            object.number("stride", info.stride_bytes);
+            object.number("bytes", info.image_size);
+            object.print();
+        } else
+            std::printf("frame=%" PRIu64 " width=%" PRIu64 " height=%" PRIu64
+                        " pfnc=0x%" PRIx64 " stride=%zu bytes=%zu\n",
+                        i + 1, info.width, info.height, info.pixel_format, info.stride_bytes, info.image_size);
         check(iris_stream_release_frame(camera.stream, &frame.info), "release frame");
     }
     if (output && std::fclose(output.release()) != 0)
@@ -379,8 +421,8 @@ bool run(std::string_view command, const Options &options)
         if (args.size() > 1) throw std::invalid_argument("too many command arguments");
     } else if (command == "get" || set) {
         if (args.empty()) throw std::invalid_argument("feature arguments are required");
-    } else if (command == "exec") {
-        if (args.size() != 1) throw std::invalid_argument("exec requires one command name");
+    } else if (command == "exec" || command == "describe") {
+        if (args.size() != 1) throw std::invalid_argument(std::string(command) + " requires one feature name");
     } else if (info || command == "xml") {
         if (!args.empty()) throw std::invalid_argument("unexpected command arguments");
     } else throw std::invalid_argument("unknown command: " + std::string(command));
@@ -390,6 +432,8 @@ bool run(std::string_view command, const Options &options)
         throw std::invalid_argument("buffer, stream-only, output and trigger options require grab");
     if ((info && !options.assignments.empty()) || (grabbing && options.module != "remote"))
         throw std::invalid_argument("invalid command options; see --help");
+    if (options.json && (command == "xml" || command == "exec" || set))
+        throw std::invalid_argument("--json requires a command that prints results");
     validate_assignments(options.assignments);
     if (set) validate_assignments(args);
     const auto count = (grabbing || events) && !args.empty()
@@ -406,12 +450,13 @@ bool run(std::string_view command, const Options &options)
         map = node_map(camera, options);
     write_features(map, options.assignments);
 
-    if (command == "features") list_features(map, args);
-    else if (command == "get") read_features(map, args);
+    if (command == "features") list_features(map, args, options.json);
+    else if (command == "describe") describe(map, args.front(), options.json);
+    else if (command == "get") read_features(map, args, options.json);
     else if (set) write_features(map, args);
     else if (command == "exec") check(iris_feature_execute(map, args.front().c_str()), args.front().c_str());
     else if (command == "xml") export_xml(map);
-    else if (events) receive_events(map, count, options.timeout);
+    else if (events) receive_events(map, count, options);
     else grab(camera, map, options, count);
     return camera.close();
 }
@@ -432,7 +477,7 @@ int main(int argc, char **argv)
     }
     try {
         return run(argv[1], parse(argc, argv)) && std::fflush(stdout) == 0 ? 0 : 1;
-    } catch (const operation_failed &) {
+    } catch (const gentl::operation_failed &) {
         return 1;
     } catch (const std::invalid_argument &error) {
         std::fprintf(stderr, "iris-gentl: %s\n", error.what());
