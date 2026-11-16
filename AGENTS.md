@@ -27,15 +27,18 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-- The default tests use the repository's mock CTI. Use the simulator options in
-  [the user guide](docs/guide.md#simulator-tests) when a change needs triggered mock
-  and continuous simulator coverage. Keep simulator and hardware results distinct.
+- GitHub CI uses the in-tree mock CTI. Use the
+  [optional simulator settings](docs/guide.md#optional-external-simulators)
+  for local triggered mock and continuous simulator qualification. Keep simulator and
+  hardware results distinct.
 - Put coverage build directories outside the workspace to keep gcov files there.
   The CMake `coverage` target enforces 90% line coverage for both the consumer
   and CLI. The public API reference can be checked with `doxygen docs/Doxyfile`.
 - CMake downloads the public EMVA dependencies and checks their hashes. Keep
   EMVA runtime binaries unmodified in release packages and include their
   notices. Verify package installation with the target distribution before
-  publishing. The GitHub workflows and packaging driver live in `.github/`.
+  publishing. The release workflow downloads and tests the published assets.
+  To repeat that check, dispatch `release.yml` with `verify_tag` set to a
+  published tag. The workflows and packaging driver live in `.github/`.
 - Keep local plans, benchmark logs, and generated build output out of commits.
   Record reproducible commands or user-facing behavior in the maintained docs.

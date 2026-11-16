@@ -2,6 +2,11 @@ name: Binary packages
 
 on:
   workflow_dispatch:
+    inputs:
+      verify_tag:
+        description: Published tag to verify again (leave blank for a packaging dry run)
+        type: string
+        default: ''
   push:
     tags: ['v*']
 
@@ -16,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
+        include: &package_targets
           - target: debian13
             image: docker.io/library/debian@sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392
           - target: ubuntu24.10
@@ -26,6 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ inputs.verify_tag || github.sha }}
           persist-credentials: false
       - name: Build package and test fixture
         shell: bash
@@ -54,6 +60,13 @@ jobs:
           name: iris-${{ matrix.target }}
           path: ${{ runner.temp }}/iris-package/release/*
           if-no-files-found: error
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: github.ref_type == 'tag' || inputs.verify_tag != ''
+        with:
+          name: fixture-${{ matrix.target }}
+          path: ${{ runner.temp }}/iris-package/fixture/iris-test-cti.cti
+          if-no-files-found: error
+          retention-days: 1
 
   publish:
     if: github.event_name == 'push' && github.ref_type == 'tag'
@@ -83,3 +96,62 @@ jobs:
           gh release create "$GITHUB_REF_NAME" "${packages[@]}" SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease \
             --title "Iris GenTL $GITHUB_REF_NAME" --generate-notes
+
+  verify-published:
+    name: Verify published ${{ matrix.target }} package
+    needs: [package, publish]
+    if: >-
+      ${{ !cancelled() && needs.package.result == 'success' &&
+          (needs.publish.result == 'success' ||
+           (github.event_name == 'workflow_dispatch' && inputs.verify_tag != '')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include: *package_targets
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ inputs.verify_tag || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: fixture-${{ matrix.target }}
+          path: ${{ runner.temp }}/iris-published/fixture
+      - name: Download and verify public release assets
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.verify_tag || github.ref_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          [[ $RELEASE_TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          version=${RELEASE_TAG#v}
+          debian="iris-gentl_${version}_debian13_amd64.deb"
+          ubuntu="iris-gentl_${version}_ubuntu24.10_amd64.deb"
+          centos="iris-gentl-${version}-centos7.9-x86_64.tar.gz"
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG"
+          mkdir -p "$RUNNER_TEMP/iris-published/release" "$RUNNER_TEMP/iris-release-downloads"
+          cd "$RUNNER_TEMP/iris-release-downloads"
+          for asset in SHA256SUMS "$debian" "$ubuntu" "$centos"; do
+            curl --fail --silent --show-error --location --retry 4 --retry-all-errors \
+              --output "$asset" "$base/$asset"
+          done
+          sha256sum -- "$debian" "$ubuntu" "$centos" | diff -u SHA256SUMS -
+          printf 'All three release asset checksums match SHA256SUMS.\n'
+          case "$TARGET" in
+            debian13) package=$debian ;;
+            ubuntu24.10) package=$ubuntu ;;
+            centos7.9) package=$centos ;;
+            *) exit 2 ;;
+          esac
+          cp -- "$package" "$RUNNER_TEMP/iris-published/release/"
+      - name: Test the package downloaded from GitHub
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUNNER_TEMP/iris-published:/work:ro" \
+            "$IMAGE" bash /src/.github/scripts/package.sh "$TARGET" verify
