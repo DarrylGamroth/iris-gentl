@@ -14,7 +14,10 @@ case "$target" in
         if [[ $stage == build ]]; then
             apt-get install -y --no-install-recommends build-essential ca-certificates cmake file libarchive-dev libxml2-dev
         else
-            apt-get install -y --no-install-recommends gcc libc6-dev /work/release/*.deb
+            # The base images exclude most documentation by default.
+            apt-get install -y --no-install-recommends \
+                -o 'Dpkg::Options::=--path-include=/usr/share/doc/iris-gentl/*' \
+                gcc libc6-dev /work/release/*.deb
         fi
         libdir=lib/x86_64-linux-gnu
         genapi_version=3.5.1
@@ -104,12 +107,18 @@ case "$stage" in
         fi
         unset LD_LIBRARY_PATH GENICAM_ROOT
         notices="$prefix/share/doc/iris-gentl/genapi"
-        test -s "$notices/License_ReadMe.txt"
-        test -s "$notices/licenses/GenICam_License.pdf"
-        (cd "$prefix/$libdir/iris-gentl/genapi" && sha256sum -c "$notices/GenApi-SHA256SUMS")
+        genapi="$prefix/$libdir/iris-gentl/genapi"
+        for file in License_ReadMe.txt licenses/GenICam_License.pdf GenApi-SHA256SUMS; do
+            if [[ ! -s $notices/$file ]]; then
+                echo "Missing GenApi notice or manifest: $notices/$file" >&2
+                exit 1
+            fi
+        done
+        (cd "$genapi" && sha256sum -c "$notices/GenApi-SHA256SUMS")
         "$prefix/bin/iris-capture" --list /work/fixture/iris-test-cti.cti
         gcc -std=c99 -Wall -Wextra -Werror -I"$prefix/include" /src/tests/package_smoke.c \
-            -L"$prefix/$libdir" -Wl,-rpath,"$prefix/$libdir" -liris -o /tmp/iris-package-smoke
+            -L"$prefix/$libdir" -Wl,-rpath,"$prefix/$libdir" -Wl,-rpath-link,"$genapi" \
+            -liris -o /tmp/iris-package-smoke
         IRIS_FAULT=progressive-complete /tmp/iris-package-smoke /work/fixture/iris-test-cti.cti
         ;;
     *) echo "Unknown package stage: $stage" >&2; exit 2 ;;

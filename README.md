@@ -24,6 +24,11 @@ GenApi runtime with its notices. The Debian and Ubuntu packages use GenApi
 CentOS `libarchive`, `libxml2`, and `libstdc++` runtime packages. Supply the
 GenTL Producer CTI and driver dependencies for your camera separately.
 
+When linking a client against the tarball on CentOS 7.9, give the system linker
+`-Wl,-rpath-link,/path/to/iris/lib/iris-gentl/genapi` so it can resolve the
+bundled libraries. Set the client's loader path to find `libiris` in the
+extracted prefix.
+
 ## Build and test
 
 Use C and C++17 compilers, CMake 3.18 or newer, and the libxml2 and libarchive development packages (`libxml2-dev` and `libarchive-dev` on Debian and Ubuntu).
