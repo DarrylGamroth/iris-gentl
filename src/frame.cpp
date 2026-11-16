@@ -201,7 +201,8 @@ iris_status_t receive(iris_stream &s, uint64_t timeout, iris_frame_t &f,
     EVENT_NEW_BUFFER_DATA event{};
     size_t size = sizeof(event);
     GC_ERROR rc;
-    const auto started = std::chrono::steady_clock::now();
+    const auto started = timeout ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
     auto remaining = timeout;
     do {
         const auto slice = std::min<uint64_t>(remaining, 20);

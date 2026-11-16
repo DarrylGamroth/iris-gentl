@@ -4,11 +4,19 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 #define EXPECT(x) do { if (!(x)) { fprintf(stderr, "%d: %s\n", __LINE__, #x); exit(1); } } while (0)
 #define OK(x) EXPECT((x) == IRIS_OK)
 
 enum { max_test_count = 10, image_size = 16 };
+
+static uint64_t monotonic_ns(void)
+{
+    struct timespec now;
+    EXPECT(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+    return (uint64_t)now.tv_sec * 1000000000 + now.tv_nsec;
+}
 
 static void run(const char *cti, const char *minimum, unsigned expected,
                 uint32_t count, int caller_owned)
@@ -45,8 +53,12 @@ static void run(const char *cti, const char *minimum, unsigned expected,
         const void *addresses[max_test_count];
         allocation_begin();
         for (unsigned i = 0; i < expected; ++i) {
+            const uint64_t started = monotonic_ns();
             OK(iris_stream_try_get_frame(stream, &frames[i]));
+            const uint64_t finished = monotonic_ns();
             EXPECT(frames[i].status == IRIS_FRAME_COMPLETE && frames[i].image_size == image_size);
+            EXPECT(frames[i].valid & IRIS_FRAME_HAS_HOST_TIMESTAMP_NS);
+            EXPECT(frames[i].host_timestamp_ns >= started && frames[i].host_timestamp_ns <= finished);
             addresses[i] = frames[i].data;
             if (caller_owned)
                 EXPECT(addresses[i] == buffers[i].data && frames[i].user_data == buffers[i].user_data);
