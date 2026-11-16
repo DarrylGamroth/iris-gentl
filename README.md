@@ -7,6 +7,23 @@ Iris GenTL is a C library for discovering cameras, configuring GenApi features, 
 - Poll for complete rows on producers that expose a stable, CPU-visible image prefix.
 - Browse and configure GenApi features on remote devices and GenTL modules.
 
+## Binary packages
+
+Download the package for your Linux x86-64 distribution and verify it against
+the release's `SHA256SUMS`. [GitHub releases](https://github.com/DarrylGamroth/iris-gentl/releases)
+
+| Platform | Artifact | Install |
+| --- | --- | --- |
+| Debian 13 amd64 | `*_debian13_amd64.deb` | `sudo apt install ./iris-gentl_VERSION_debian13_amd64.deb` |
+| Ubuntu 24.10 amd64 | `*_ubuntu24.10_amd64.deb` | `sudo apt install ./iris-gentl_VERSION_ubuntu24.10_amd64.deb` |
+| CentOS 7.9 x86-64 | `*-centos7.9-x86_64.tar.gz` | Extract into a directory of your choice. Run `bin/iris-capture` from the extracted prefix. |
+
+Each package includes `libiris`, `iris.h`, `iris-capture`, and EMVA's unmodified
+GenApi runtime with its notices. The Debian and Ubuntu packages use GenApi
+3.5.1. The CentOS tarball uses GenApi 3.5.0 for glibc 2.17 and requires the
+CentOS `libarchive`, `libxml2`, and `libstdc++` runtime packages. Supply the
+GenTL Producer CTI and driver dependencies for your camera separately.
+
 ## Build and test
 
 Use C and C++17 compilers, CMake 3.18 or newer, and the libxml2 and libarchive development packages (`libxml2-dev` and `libarchive-dev` on Debian and Ubuntu).
@@ -29,7 +46,12 @@ GitHub Actions builds Iris and runs the bundled mock CTI tests. See the [user gu
 cmake --install build --prefix /path/to/iris
 ```
 
-Applications that link to a prebuilt Iris library use `iris.h`. They need the Iris library and GenApi runtime on the loader's search path. The downloaded runtime is in `build/_deps/emva/genapi-3.5.1/bin/Linux64_x64`. Get camera CTIs and their runtime dependencies from their providers. See the [environment settings](docs/guide.md#environment).
+Applications that link to a prebuilt Iris library use `iris.h`. A default
+source install needs the Iris library and GenApi runtime on the loader's
+search path. The downloaded runtime is in
+`build/_deps/emva/genapi-3.5.1/bin/Linux64_x64`. The release packages use
+`-DIRIS_BUNDLE_GENAPI=ON` to install GenApi beside Iris with a relative loader
+path. See the [environment settings](docs/guide.md#environment).
 
 To try capture from the build directory, point Iris at a producer and use an idle camera configured for continuous acquisition.
 
@@ -49,4 +71,4 @@ The C API and ABI are provisional. Use the header that matches `libiris` and reb
 
 ## License
 
-Iris is available under the [MIT License](LICENSE). EMVA's GenApi SDK, runtime, and GenTL reference header are separately licensed and stay in the build directory when downloaded. [EMVA GenICam license](https://www.emva.org/wp-content/uploads/GenICam_License_20231009.pdf)
+Iris is available under the [MIT License](LICENSE). EMVA's GenApi SDK, runtime, and GenTL reference header are separately licensed. [EMVA GenICam license](https://www.emva.org/wp-content/uploads/GenICam_License_20231009.pdf)

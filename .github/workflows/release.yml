@@ -1,0 +1,85 @@
+name: Binary packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: ${{ matrix.target }} amd64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: debian13
+            image: docker.io/library/debian@sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392
+          - target: ubuntu24.10
+            image: docker.io/library/ubuntu@sha256:f995e05e8adc3292853cc37e6edda72351f8002ce7469a29322d19e01529cb9f
+          - target: centos7.9
+            image: docker.io/library/centos@sha256:dead07b4d8ed7e29e98de0f4504d87e8880d4347859d839686a31da35a3b532f
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Build package and test fixture
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/iris-package"
+          if [[ $GITHUB_REF_TYPE == tag ]]; then
+            export IRIS_RELEASE_TAG=$GITHUB_REF_NAME
+          fi
+          docker run --rm -e IRIS_RELEASE_TAG \
+            -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUNNER_TEMP/iris-package:/work" \
+            "$IMAGE" bash /src/ci/package.sh "$TARGET" build
+      - name: Verify the installed package in a fresh container
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUNNER_TEMP/iris-package:/work:ro" \
+            "$IMAGE" bash /src/ci/package.sh "$TARGET" verify
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: iris-${{ matrix.target }}
+          path: ${{ runner.temp }}/iris-package/release/*
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: iris-*
+          merge-multiple: true
+          path: release
+      - name: Publish packages
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd release || exit 1
+          version=${GITHUB_REF_NAME#v}
+          packages=(
+            "iris-gentl_${version}_debian13_amd64.deb"
+            "iris-gentl_${version}_ubuntu24.10_amd64.deb"
+            "iris-gentl-${version}-centos7.9-x86_64.tar.gz"
+          )
+          sha256sum -- "${packages[@]}" > SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" "${packages[@]}" SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease \
+            --title "Iris GenTL $GITHUB_REF_NAME" --generate-notes

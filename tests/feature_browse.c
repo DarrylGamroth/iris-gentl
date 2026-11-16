@@ -143,7 +143,7 @@ static void write_zip(const char *xml, size_t size, int fd)
     archive_entry_set_perm(entry, 0600);
     archive_entry_set_size(entry, size);
     EXPECT(archive_write_header(writer, entry) == ARCHIVE_OK);
-    EXPECT(archive_write_data(writer, xml, size) == (la_ssize_t)size);
+    EXPECT(archive_write_data(writer, xml, size) == (ssize_t)size);
     archive_entry_free(entry);
     EXPECT(archive_write_free(writer) == ARCHIVE_OK);
     EXPECT(close(fd) == 0);

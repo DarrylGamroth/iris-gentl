@@ -17,8 +17,9 @@ std::string iris::unzip_xml(std::string_view zip, const char *operation)
 {
     std::unique_ptr<archive, decltype(&archive_read_free)> reader(archive_read_new(), archive_read_free);
     require(reader != nullptr, IRIS_NO_MEMORY, operation, "cannot create ZIP reader");
+    // Older libarchive headers take void*, although this reader only reads the buffer.
     require(archive_read_support_format_zip(reader.get()) == ARCHIVE_OK &&
-            archive_read_open_memory(reader.get(), zip.data(), zip.size()) == ARCHIVE_OK,
+            archive_read_open_memory(reader.get(), const_cast<char *>(zip.data()), zip.size()) == ARCHIVE_OK,
             IRIS_GENAPI_ERROR, operation, "cannot open XML ZIP");
     archive_entry *entry = nullptr;
     std::string xml;
