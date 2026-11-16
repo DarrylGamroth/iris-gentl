@@ -60,8 +60,9 @@ jobs:
           cmake -S . -B "$coverage_build" -DBUILD_TESTING=ON -DIRIS_COVERAGE=ON
           cmake --build "$coverage_build" --parallel
           ctest --test-dir "$coverage_build" --output-on-failure --no-tests=error
+          # Publish line coverage to match the local coverage gates.
           gcovr --root "$GITHUB_WORKSPACE" --filter '^src/' --filter '^inc/internal/' --filter '^tools/' \
-            --cobertura "$RUNNER_TEMP/iris-coverage.xml" --print-summary "$coverage_build"
+            --exclude-branches-by-pattern '.*' --cobertura "$RUNNER_TEMP/iris-coverage.xml" --print-summary "$coverage_build"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1

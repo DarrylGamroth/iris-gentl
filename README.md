@@ -46,7 +46,7 @@ Building Iris uses the GenApi SDK headers, the GenApi runtime libraries, and the
 
 For an offline build, set `GENICAM_ROOT` to an unpacked SDK and runtime, then configure with `-DIRIS_DOWNLOAD_EMVA=OFF -DGENTL_INCLUDE_DIR=/path/to/gentl`.
 
-GitHub Actions builds Iris and runs the bundled mock CTI tests. The Codecov badge measures the consumer and CLI with that test suite. See the [user guide](docs/guide.md#simulator-tests) for triggered mock and continuous simulator tests and the local coverage gates.
+GitHub Actions builds Iris and runs the bundled mock CTI tests. The Codecov badge reports line coverage for the consumer and CLI with that test suite. See the [user guide](docs/guide.md#simulator-tests) for triggered mock and continuous simulator tests and the local coverage gates.
 
 ## Install and use
 
