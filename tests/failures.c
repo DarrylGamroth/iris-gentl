@@ -196,6 +196,7 @@ static void run(const char *path, const char *scenario)
                 OK(iris_stream_try_get_frame(stream, &frame));
                 iris_frame_status_t expected = IRIS_FRAME_COMPLETE;
                 if (!strcmp(scenario, "invalid") || !strcmp(scenario, "height-invalid") ||
+                    !strcmp(scenario, "info-wrong-type") || !strcmp(scenario, "info-wrong-size") ||
                     !strcmp(scenario, "caller-wrong-base")) expected = IRIS_FRAME_INVALID_IMAGE;
                 if (!strcmp(scenario, "payload") || !strcmp(scenario, "packed-odd")) expected = IRIS_FRAME_UNSUPPORTED_PAYLOAD;
                 if (!strcmp(scenario, "incomplete") || !strcmp(scenario, "short-image") || !strcmp(scenario, "height-short")) expected = IRIS_FRAME_INCOMPLETE;
@@ -286,7 +287,8 @@ int main(int argc, char **argv)
         "throw-interface", "throw-device", "close-interface", "close-system", "close-library",
         "discover-close", "missing-device", "partial-stream-error", "partial-stream-throw", "armed-error", "armed-throw",
         "announce", "queue", "start", "revoke", "stop", "timeout", "abort", "event", "event-null",
-        "incomplete", "short-image", "height-short", "height-invalid", "packed", "packed-odd", "payload", "invalid", "requeue", "io-event", "throw-event", "throw-requeue", "throw-stop"};
+        "incomplete", "short-image", "height-short", "height-invalid", "info-wrong-type", "info-wrong-size",
+        "packed", "packed-odd", "payload", "invalid", "requeue", "io-event", "throw-event", "throw-requeue", "throw-stop"};
     for (size_t i = 0; i < sizeof(cases) / sizeof(*cases); ++i) run(argv[1], cases[i]);
     test_producer_alias(argv[1]);
     return 0;

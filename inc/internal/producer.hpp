@@ -46,6 +46,7 @@ struct Producer {
     GenTL::PDSGetNumBufferParts DSGetNumBufferParts = nullptr;
     GenTL::PDSGetBufferPartInfo DSGetBufferPartInfo = nullptr;
     GenTL::PDSGetBufferChunkData DSGetBufferChunkData = nullptr;
+    GenTL::PDSGetBufferInfoStacked DSGetBufferInfoStacked = nullptr;
 
     ~Producer();
     iris_status_t close();

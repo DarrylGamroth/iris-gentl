@@ -30,6 +30,83 @@ bool buffer_info(iris_stream &s, BUFFER_HANDLE buffer, BUFFER_INFO_CMD cmd, T &o
     });
 }
 
+struct ScalarBufferInfo {
+    iris_stream &stream;
+    BUFFER_HANDLE handle;
+
+    template<BUFFER_INFO_CMD command, class T> bool get(T &out) const
+    {
+        return buffer_info(stream, handle, command, out);
+    }
+};
+
+struct BufferInfoField {
+    BUFFER_INFO_CMD command;
+    size_t size;
+};
+
+constexpr BufferInfoField frame_info_fields[] = {
+    {BUFFER_INFO_FRAMEID, sizeof(uint64_t)},
+    {BUFFER_INFO_TIMESTAMP_NS, sizeof(uint64_t)},
+    {BUFFER_INFO_PIXEL_ENDIANNESS, sizeof(int32_t)},
+    {BUFFER_INFO_IS_INCOMPLETE, sizeof(bool8_t)},
+    {BUFFER_INFO_PAYLOADTYPE, sizeof(size_t)},
+    {BUFFER_INFO_SIZE_FILLED, sizeof(size_t)},
+    {BUFFER_INFO_DATA_SIZE, sizeof(size_t)},
+    {BUFFER_INFO_IMAGEOFFSET, sizeof(size_t)},
+    {BUFFER_INFO_DELIVERED_IMAGEHEIGHT, sizeof(size_t)},
+    {BUFFER_INFO_CONTAINS_CHUNKDATA, sizeof(bool8_t)},
+    {BUFFER_INFO_IS_COMPOSITE, sizeof(bool8_t)},
+    {BUFFER_INFO_BASE, sizeof(void *)},
+    {BUFFER_INFO_SIZE, sizeof(size_t)},
+    {BUFFER_INFO_DATA_LARGER_THAN_BUFFER, sizeof(bool8_t)},
+    {BUFFER_INFO_PIXELFORMAT, sizeof(uint64_t)},
+    {BUFFER_INFO_PIXELFORMAT_NAMESPACE, sizeof(uint64_t)},
+    {BUFFER_INFO_WIDTH, sizeof(size_t)},
+    {BUFFER_INFO_HEIGHT, sizeof(size_t)},
+    {BUFFER_INFO_IMAGEPRESENT, sizeof(bool8_t)},
+    {BUFFER_INFO_XPADDING, sizeof(size_t)},
+};
+
+constexpr size_t frame_info_count = std::size(frame_info_fields);
+
+constexpr size_t frame_info_index(BUFFER_INFO_CMD command)
+{
+    for (size_t i = 0; i < frame_info_count; ++i)
+        if (frame_info_fields[i].command == command) return i;
+    return frame_info_count;
+}
+
+struct StackedBufferInfo {
+    ScalarBufferInfo scalar;
+    alignas(uint64_t) unsigned char values[frame_info_count][sizeof(uint64_t)]{};
+    DS_BUFFER_INFO_STACKED entries[frame_info_count];
+
+    GC_ERROR query(PDSGetBufferInfoStacked call)
+    {
+        for (size_t i = 0; i < frame_info_count; ++i) {
+            const auto field = frame_info_fields[i];
+            entries[i] = {field.command, INFO_DATATYPE_UNKNOWN, values[i], field.size, GC_ERR_NOT_AVAILABLE};
+        }
+        return call(scalar.stream.handle, scalar.handle, entries, frame_info_count);
+    }
+
+    template<BUFFER_INFO_CMD command, class T> bool get(T &out) const
+    {
+        constexpr auto index = frame_info_index(command);
+        if constexpr (index == frame_info_count) {
+            static_assert(command == BUFFER_INFO_CHUNKLAYOUTID);
+            return scalar.get<command>(out);
+        } else {
+            static_assert(frame_info_fields[index].size == sizeof(T));
+            const auto &entry = entries[index];
+            if (entry.iResult != GC_ERR_SUCCESS || !valid_info<T>(entry.iType, entry.iSize)) return false;
+            std::memcpy(&out, values[index], sizeof(T));
+            return true;
+        }
+    }
+};
+
 // PFNC single-plane formats with a known row layout. Packed Mono formats
 // require an integral number of groups per row, so image and line packing
 // produce the same row boundaries.
@@ -64,34 +141,37 @@ size_t row_bytes(uint64_t format, size_t width)
     return width / pixels * bytes;
 }
 
-void image(iris_stream &s, Buffer &buffer, iris_frame_t &f)
+template<class Info> void image(iris_stream &s, Buffer &buffer, iris_frame_t &f, const Info &info)
 {
-    const auto h = buffer.handle;
-    if (buffer_info(s, h, BUFFER_INFO_FRAMEID, f.frame_id)) f.valid |= IRIS_FRAME_HAS_ID;
-    if (buffer_info(s, h, BUFFER_INFO_TIMESTAMP_NS, f.timestamp_ns)) f.valid |= IRIS_FRAME_HAS_TIMESTAMP_NS;
-    if (buffer_info(s, h, BUFFER_INFO_PIXEL_ENDIANNESS, f.pixel_endianness)) f.valid |= IRIS_FRAME_HAS_PIXEL_ENDIANNESS;
+    if (info.template get<BUFFER_INFO_FRAMEID>(f.frame_id)) f.valid |= IRIS_FRAME_HAS_ID;
+    if (info.template get<BUFFER_INFO_TIMESTAMP_NS>(f.timestamp_ns)) f.valid |= IRIS_FRAME_HAS_TIMESTAMP_NS;
+    if (info.template get<BUFFER_INFO_PIXEL_ENDIANNESS>(f.pixel_endianness)) f.valid |= IRIS_FRAME_HAS_PIXEL_ENDIANNESS;
     auto &payload = f.payload;
     f.user_data = buffer.user_data;
     payload.capacity = buffer.capacity;
-    const auto metadata = [&](BUFFER_INFO_CMD field, auto &value, uint32_t flag) {
-        if (buffer_info(s, h, field, value)) payload.valid |= flag;
-    };
     bool8_t incomplete = 0, larger = 0, chunks = 0;
-    metadata(BUFFER_INFO_IS_INCOMPLETE, incomplete, IRIS_PAYLOAD_HAS_INCOMPLETE);
-    metadata(BUFFER_INFO_PAYLOADTYPE, payload.type, IRIS_PAYLOAD_HAS_TYPE);
-    metadata(BUFFER_INFO_SIZE_FILLED, payload.size_filled, IRIS_PAYLOAD_HAS_SIZE_FILLED);
-    metadata(BUFFER_INFO_DATA_SIZE, payload.data_size, IRIS_PAYLOAD_HAS_DATA_SIZE);
-    metadata(BUFFER_INFO_IMAGEOFFSET, payload.image_offset, IRIS_PAYLOAD_HAS_IMAGE_OFFSET);
-    metadata(BUFFER_INFO_DELIVERED_IMAGEHEIGHT, payload.delivered_image_height,
-             IRIS_PAYLOAD_HAS_DELIVERED_IMAGE_HEIGHT);
-    metadata(BUFFER_INFO_CONTAINS_CHUNKDATA, chunks, IRIS_PAYLOAD_HAS_CHUNK_DATA);
-    if (chunks || payload.type == IRIS_PAYLOAD_CHUNK_DATA || payload.type == IRIS_PAYLOAD_CHUNK_ONLY)
-        metadata(BUFFER_INFO_CHUNKLAYOUTID, payload.chunk_layout_id, IRIS_PAYLOAD_HAS_CHUNK_LAYOUT_ID);
+    if (info.template get<BUFFER_INFO_IS_INCOMPLETE>(incomplete))
+        payload.valid |= IRIS_PAYLOAD_HAS_INCOMPLETE;
+    if (info.template get<BUFFER_INFO_PAYLOADTYPE>(payload.type))
+        payload.valid |= IRIS_PAYLOAD_HAS_TYPE;
+    if (info.template get<BUFFER_INFO_SIZE_FILLED>(payload.size_filled))
+        payload.valid |= IRIS_PAYLOAD_HAS_SIZE_FILLED;
+    if (info.template get<BUFFER_INFO_DATA_SIZE>(payload.data_size))
+        payload.valid |= IRIS_PAYLOAD_HAS_DATA_SIZE;
+    if (info.template get<BUFFER_INFO_IMAGEOFFSET>(payload.image_offset))
+        payload.valid |= IRIS_PAYLOAD_HAS_IMAGE_OFFSET;
+    if (info.template get<BUFFER_INFO_DELIVERED_IMAGEHEIGHT>(payload.delivered_image_height))
+        payload.valid |= IRIS_PAYLOAD_HAS_DELIVERED_IMAGE_HEIGHT;
+    if (info.template get<BUFFER_INFO_CONTAINS_CHUNKDATA>(chunks))
+        payload.valid |= IRIS_PAYLOAD_HAS_CHUNK_DATA;
+    if ((chunks || payload.type == IRIS_PAYLOAD_CHUNK_DATA || payload.type == IRIS_PAYLOAD_CHUNK_ONLY) &&
+        info.template get<BUFFER_INFO_CHUNKLAYOUTID>(payload.chunk_layout_id))
+        payload.valid |= IRIS_PAYLOAD_HAS_CHUNK_LAYOUT_ID;
     payload.incomplete = incomplete != 0;
     payload.contains_chunk_data = chunks != 0;
     // GenTL composite offsets can refer to discontiguous memory.
     bool8_t composite = 0;
-    buffer_info(s, h, BUFFER_INFO_IS_COMPOSITE, composite);
+    info.template get<BUFFER_INFO_IS_COMPOSITE>(composite);
     if (composite) payload.valid |= IRIS_PAYLOAD_IS_COMPOSITE;
 
     void *base = nullptr;
@@ -99,12 +179,12 @@ void image(iris_stream &s, Buffer &buffer, iris_frame_t &f)
     const auto filled = payload.size_filled;
     const auto *announced = buffer.caller_data ? buffer.caller_data : buffer.storage;
     const bool has_base = !composite && filled <= buffer.capacity &&
-        buffer_info(s, h, BUFFER_INFO_BASE, base) && base &&
+        info.template get<BUFFER_INFO_BASE>(base) && base &&
         (!announced || base == announced) &&
-        (!buffer_info(s, h, BUFFER_INFO_SIZE, reported_capacity) || filled <= reported_capacity);
+        (!info.template get<BUFFER_INFO_SIZE>(reported_capacity) || filled <= reported_capacity);
     const size_t capacity = std::min(buffer.capacity, reported_capacity);
     const bool structured = payload.type == IRIS_PAYLOAD_MULTI_PART || payload.type == IRIS_PAYLOAD_GENDC;
-    const bool truncated = incomplete || (buffer_info(s, h, BUFFER_INFO_DATA_LARGER_THAN_BUFFER, larger) && larger);
+    const bool truncated = incomplete || (info.template get<BUFFER_INFO_DATA_LARGER_THAN_BUFFER>(larger) && larger);
     const bool bounded = has_base && capacity && capacity <= PTRDIFF_MAX &&
         capacity <= UINTPTR_MAX - reinterpret_cast<uintptr_t>(base);
     buffer.payload_base = bounded ? static_cast<const unsigned char *>(base) : nullptr;
@@ -125,8 +205,8 @@ void image(iris_stream &s, Buffer &buffer, iris_frame_t &f)
     }
     f.status = IRIS_FRAME_INVALID_IMAGE;
     uint64_t name_space = 0;
-    if (buffer_info(s, h, BUFFER_INFO_PIXELFORMAT, f.pixel_format) &&
-        buffer_info(s, h, BUFFER_INFO_PIXELFORMAT_NAMESPACE, name_space) && name_space <= UINT32_MAX) {
+    if (info.template get<BUFFER_INFO_PIXELFORMAT>(f.pixel_format) &&
+        info.template get<BUFFER_INFO_PIXELFORMAT_NAMESPACE>(name_space) && name_space <= UINT32_MAX) {
         f.valid |= IRIS_FRAME_HAS_PIXEL_FORMAT;
         f.pixel_format_namespace = static_cast<uint32_t>(name_space);
     }
@@ -134,9 +214,9 @@ void image(iris_stream &s, Buffer &buffer, iris_frame_t &f)
     bool8_t present = 0;
     if (!(payload.valid & IRIS_PAYLOAD_HAS_INCOMPLETE) || !payload.data ||
         !(payload.valid & IRIS_PAYLOAD_HAS_IMAGE_OFFSET) || offset >= filled ||
-        !buffer_info(s, h, BUFFER_INFO_WIDTH, f.width) ||
-        !buffer_info(s, h, BUFFER_INFO_HEIGHT, f.height) ||
-        (buffer_info(s, h, BUFFER_INFO_IMAGEPRESENT, present) && !present) ||
+        !info.template get<BUFFER_INFO_WIDTH>(f.width) ||
+        !info.template get<BUFFER_INFO_HEIGHT>(f.height) ||
+        (info.template get<BUFFER_INFO_IMAGEPRESENT>(present) && !present) ||
         !f.width || !f.height)
         return;
     if (!(f.valid & IRIS_FRAME_HAS_PIXEL_FORMAT) ||
@@ -158,7 +238,7 @@ void image(iris_stream &s, Buffer &buffer, iris_frame_t &f)
         }
     }
     size_t xpad = 0;
-    if (!buffer_info(s, h, BUFFER_INFO_XPADDING, xpad) || xpad > SIZE_MAX - row)
+    if (!info.template get<BUFFER_INFO_XPADDING>(xpad) || xpad > SIZE_MAX - row)
         return;
     const size_t stride = row + xpad;
     if (f.height > (filled - offset) / stride) {
@@ -171,6 +251,26 @@ void image(iris_stream &s, Buffer &buffer, iris_frame_t &f)
     f.data = static_cast<const unsigned char *>(base) + offset;
     f.status = IRIS_FRAME_COMPLETE;
     f.valid |= IRIS_FRAME_HAS_STRIDE;
+}
+
+// Keep the batch workspace off the scalar polling path.
+[[gnu::noinline]] bool stacked_image(iris_stream &s, Buffer &buffer, iris_frame_t &f,
+                                    PDSGetBufferInfoStacked call)
+{
+    StackedBufferInfo info{{s, buffer.handle}};
+    const auto status = info.query(call);
+    if (status == GC_ERR_SUCCESS) {
+        image(s, buffer, f, info);
+        return true;
+    }
+    if (status == GC_ERR_NOT_IMPLEMENTED) s.DSGetBufferInfoStacked = nullptr;
+    return false;
+}
+
+void image(iris_stream &s, Buffer &buffer, iris_frame_t &f)
+{
+    if (s.DSGetBufferInfoStacked && stacked_image(s, buffer, f, s.DSGetBufferInfoStacked)) return;
+    image(s, buffer, f, ScalarBufferInfo{s, buffer.handle});
 }
 
 class Reader {

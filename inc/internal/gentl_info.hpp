@@ -38,13 +38,18 @@ template<class T> constexpr INFO_DATATYPE info_type()
     else return INFO_DATATYPE_UINT64; // size_t and uint64_t are the same on this ABI
 }
 
+template<class T> bool valid_info(INFO_DATATYPE type, size_t size)
+{
+    return size == sizeof(T) && (type == info_type<T>() ||
+        (std::is_same_v<T, uint64_t> && type == INFO_DATATYPE_SIZET));
+}
+
 template<class T, class F> bool get_info(T &out, F f)
 {
     INFO_DATATYPE type = 0;
     size_t size = sizeof(T);
     T value{};
-    if (f(&type, &value, &size) != GC_ERR_SUCCESS || size != sizeof(T)) return false;
-    if (type != info_type<T>() && !(std::is_same_v<T, uint64_t> && type == INFO_DATATYPE_SIZET))
+    if (f(&type, &value, &size) != GC_ERR_SUCCESS || !valid_info<T>(type, size))
         return false;
     out = value;
     return true;

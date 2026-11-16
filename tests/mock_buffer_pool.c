@@ -2,8 +2,10 @@
 #include "allocations.h"
 #include "iris.h"
 
+#include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 #define EXPECT(x) do { if (!(x)) { fprintf(stderr, "%d: %s\n", __LINE__, #x); exit(1); } } while (0)
@@ -25,6 +27,10 @@ static void run(const char *cti, const char *minimum, unsigned expected,
     snprintf(expected_text, sizeof expected_text, "%u", expected);
     EXPECT(setenv("IRIS_MOCK_MIN_BUFFERS", minimum, 1) == 0);
     EXPECT(setenv("IRIS_MOCK_EXPECT_BUFFERS", expected_text, 1) == 0);
+    void *library = dlopen(cti, RTLD_NOW | RTLD_LOCAL);
+    EXPECT(library != NULL);
+    void (*counts)(size_t *, size_t *) = dlsym(library, "iris_test_buffer_info_counts");
+    EXPECT(counts != NULL);
 
     iris_context_t *context = NULL;
     iris_device_t *device = NULL;
@@ -57,6 +63,10 @@ static void run(const char *cti, const char *minimum, unsigned expected,
             OK(iris_stream_try_get_frame(stream, &frames[i]));
             const uint64_t finished = monotonic_ns();
             EXPECT(frames[i].status == IRIS_FRAME_COMPLETE && frames[i].image_size == image_size);
+            EXPECT(frames[i].width == 2 && frames[i].height == 4 && frames[i].stride_bytes == 4);
+            EXPECT(frames[i].pixel_format == 0x01100007 && frames[i].payload.size_filled == image_size);
+            EXPECT(frames[i].payload.type == IRIS_PAYLOAD_IMAGE && frames[i].payload.capacity == image_size);
+            EXPECT(!(frames[i].payload.valid & IRIS_PAYLOAD_HAS_DATA_SIZE));
             EXPECT(frames[i].valid & IRIS_FRAME_HAS_HOST_TIMESTAMP_NS);
             EXPECT(frames[i].host_timestamp_ns >= started && frames[i].host_timestamp_ns <= finished);
             addresses[i] = frames[i].data;
@@ -76,15 +86,23 @@ static void run(const char *cti, const char *minimum, unsigned expected,
         EXPECT(allocations.consumer_calls == 0 && allocations.consumer_bytes == 0);
         OK(iris_stream_stop(stream));
     }
+    size_t stacked, scalar;
+    counts(&stacked, &scalar);
+    const char *mode = getenv("IRIS_MOCK_STACKED_INFO");
+    const size_t frames = 4 * expected;
+    EXPECT(stacked == (mode ? frames : 1));
+    EXPECT(scalar == (!mode ? 20 * frames : strcmp(mode, "transient-error") == 0 ? 20 : 0));
     OK(iris_stream_close(&stream));
     OK(iris_device_close(&device));
     OK(iris_context_close(&context));
+    EXPECT(dlclose(library) == 0);
 }
 
 int main(int argc, char **argv)
 {
     EXPECT(argc == 2);
     EXPECT(setenv("IRIS_FAULT", "progressive-pool", 1) == 0);
+    EXPECT(setenv("IRIS_MOCK_COUNT_BUFFER_INFO", "1", 1) == 0);
     run(argv[1], "1", 8, 0, 0);
     run(argv[1], "10", 10, 0, 0);
     run(argv[1], "2", 4, 4, 0);

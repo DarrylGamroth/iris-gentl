@@ -64,6 +64,7 @@ struct alignas(iris::cache_line_size) iris_stream {
     iris_device *device = nullptr;
     GenTL::DS_HANDLE handle = nullptr;
     GenTL::EVENT_HANDLE event = nullptr;
+    GenTL::PDSGetBufferInfoStacked DSGetBufferInfoStacked = nullptr;
     std::unique_ptr<iris_node_map> map;
     iris_node_map *remote_map = nullptr;
     std::vector<iris::Buffer> buffers;

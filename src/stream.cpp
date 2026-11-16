@@ -207,6 +207,7 @@ iris_status_t iris_stream_open(iris_device_t *d, size_t index, iris_stream_t **o
             return status;
         }
         stream->device = d;
+        stream->DSGetBufferInfoStacked = p.DSGetBufferInfoStacked;
         ++d->streams;
         *out = stream.release();
         return IRIS_OK;

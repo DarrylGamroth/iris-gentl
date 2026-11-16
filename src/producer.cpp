@@ -179,6 +179,7 @@ std::shared_ptr<Producer> load(const char *name)
     p->DSGetNumBufferParts = reinterpret_cast<PDSGetNumBufferParts>(dlsym(p->library, "DSGetNumBufferParts"));
     p->DSGetBufferPartInfo = reinterpret_cast<PDSGetBufferPartInfo>(dlsym(p->library, "DSGetBufferPartInfo"));
     p->DSGetBufferChunkData = reinterpret_cast<PDSGetBufferChunkData>(dlsym(p->library, "DSGetBufferChunkData"));
+    p->DSGetBufferInfoStacked = reinterpret_cast<PDSGetBufferInfoStacked>(dlsym(p->library, "DSGetBufferInfoStacked"));
     try {
         p->check(p->GCInitLib(), "GCInitLib");
         p->initialized = true;

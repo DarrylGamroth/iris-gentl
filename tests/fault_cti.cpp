@@ -230,6 +230,10 @@ std::array<unsigned char, 100> registers{};
 constexpr size_t software_trigger_register = 92;
 size_t stacked_calls = 0;
 size_t scalar_writes = 0;
+enum class StackedBufferInfoMode { unsupported, supported, transient_error };
+StackedBufferInfoMode stacked_buffer_info_mode;
+bool count_buffer_info;
+size_t stacked_buffer_info_calls, scalar_buffer_info_calls;
 void (*write_observer)(void *, uint64_t) = nullptr;
 void *write_observer_context = nullptr;
 
@@ -400,6 +404,11 @@ extern "C" GC_IMPORT_EXPORT void iris_test_stack_counts(size_t *stacked, size_t 
     *stacked = stacked_calls;
     *scalar = scalar_writes;
 }
+extern "C" GC_IMPORT_EXPORT void iris_test_buffer_info_counts(size_t *stacked, size_t *scalar)
+{
+    *stacked = stacked_buffer_info_calls;
+    *scalar = scalar_buffer_info_calls;
+}
 
 EXPORT(GCInitLib)()
 {
@@ -423,6 +432,12 @@ EXPORT(GCInitLib)()
         registers[96] = !mode("progressive-no-frame-start");
     }
     stacked_calls = scalar_writes = 0;
+    const char *stacked = std::getenv("IRIS_MOCK_STACKED_INFO");
+    stacked_buffer_info_mode = !stacked ? StackedBufferInfoMode::unsupported :
+        std::strcmp(stacked, "transient-error") == 0 ? StackedBufferInfoMode::transient_error :
+                                                       StackedBufferInfoMode::supported;
+    count_buffer_info = std::getenv("IRIS_MOCK_COUNT_BUFFER_INFO") != nullptr;
+    stacked_buffer_info_calls = scalar_buffer_info_calls = 0;
     invalidation_registered = invalidation_pending = false;
     event_queues = {};
     return 0;
@@ -640,11 +655,9 @@ EXPORT(DSStopAcquisition)(DS_HANDLE, ACQ_STOP_FLAGS)
     registers[software_trigger_register] = 0;
     return 0;
 }
-EXPORT(DSGetBufferInfo)(DS_HANDLE, BUFFER_HANDLE handle, BUFFER_INFO_CMD cmd, INFO_DATATYPE *type, void *out, size_t *size)
+static GC_ERROR buffer_info(AnnouncedBuffer *buffer, BUFFER_INFO_CMD cmd, INFO_DATATYPE *type, void *out, size_t *size)
 {
-    if (mode("progressive-pool")) {
-        auto *buffer = find_buffer(handle);
-        if (!buffer) return error(GC_ERR_INVALID_HANDLE);
+    if (buffer) {
         if (cmd == BUFFER_INFO_BASE) return info(INFO_DATATYPE_PTR, buffer->data, type, out, size);
         if (cmd == BUFFER_INFO_SIZE) return info(INFO_DATATYPE_SIZET, buffer->size, type, out, size);
         if (cmd == BUFFER_INFO_IS_QUEUED) {
@@ -695,6 +708,8 @@ EXPORT(DSGetBufferInfo)(DS_HANDLE, BUFFER_HANDLE handle, BUFFER_INFO_CMD cmd, IN
     case BUFFER_INFO_CHUNKLAYOUTID:
         return info(INFO_DATATYPE_UINT64, uint64_t{123}, type, out, size);
     case BUFFER_INFO_WIDTH:
+        if (mode("info-wrong-type")) return info(INFO_DATATYPE_PTR, size_t{4}, type, out, size);
+        if (mode("info-wrong-size")) return info(INFO_DATATYPE_SIZET, uint32_t{4}, type, out, size);
         return info(INFO_DATATYPE_SIZET, size_t{progressive() ? 2u : mode("packed-odd") ? 3u : 4u}, type, out, size);
     case BUFFER_INFO_HEIGHT:
         return info(INFO_DATATYPE_SIZET, size_t{mode("packed") || mode("packed-odd") ? 2u : 4u}, type, out, size);
@@ -712,6 +727,38 @@ EXPORT(DSGetBufferInfo)(DS_HANDLE, BUFFER_HANDLE handle, BUFFER_INFO_CMD cmd, IN
     case BUFFER_INFO_PIXELFORMAT_NAMESPACE: return info(INFO_DATATYPE_UINT64, uint64_t{PIXELFORMAT_NAMESPACE_PFNC_32BIT}, type, out, size);
     default: return error(GC_ERR_NOT_IMPLEMENTED);
     }
+}
+EXPORT(DSGetBufferInfo)(DS_HANDLE, BUFFER_HANDLE handle, BUFFER_INFO_CMD cmd, INFO_DATATYPE *type, void *out, size_t *size)
+{
+    if (count_buffer_info) ++scalar_buffer_info_calls;
+    const bool pooled = mode("progressive-pool");
+    auto *buffer = pooled ? find_buffer(handle) : nullptr;
+    if (pooled && !buffer) return error(GC_ERR_INVALID_HANDLE);
+    return buffer_info(buffer, cmd, type, out, size);
+}
+EXPORT(DSGetBufferInfoStacked)(DS_HANDLE, BUFFER_HANDLE handle, DS_BUFFER_INFO_STACKED *entries, size_t count)
+{
+    if (count_buffer_info) ++stacked_buffer_info_calls;
+    if (stacked_buffer_info_mode == StackedBufferInfoMode::unsupported) return error(GC_ERR_NOT_IMPLEMENTED);
+    if (stacked_buffer_info_mode == StackedBufferInfoMode::transient_error) {
+        stacked_buffer_info_mode = StackedBufferInfoMode::supported;
+        return error(GC_ERR_IO);
+    }
+    const bool pooled = mode("progressive-pool");
+    auto *buffer = pooled ? find_buffer(handle) : nullptr;
+    if (pooled && !buffer) return error(GC_ERR_INVALID_HANDLE);
+    const auto saved_error = last_error;
+    for (size_t i = 0; i < count; ++i) {
+        auto &entry = entries[i];
+        // Use aligned locals for the packed output members.
+        INFO_DATATYPE type = INFO_DATATYPE_UNKNOWN;
+        size_t size = entry.iSize;
+        entry.iResult = buffer_info(buffer, entry.iInfoCmd, &type, entry.pBuffer, &size);
+        entry.iType = type;
+        entry.iSize = size;
+    }
+    last_error = saved_error;
+    return GC_ERR_SUCCESS;
 }
 EXPORT(DSGetNumBufferParts)(DS_HANDLE, BUFFER_HANDLE, uint32_t *count)
 {
