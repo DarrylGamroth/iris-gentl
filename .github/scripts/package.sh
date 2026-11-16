@@ -122,6 +122,8 @@ case "$stage" in
             -L"$prefix/$libdir" -Wl,-rpath,"$prefix/$libdir" -Wl,-rpath-link,"$genapi" \
             -liris -o /tmp/iris-package-smoke
         IRIS_FAULT=progressive-complete /tmp/iris-package-smoke /work/fixture/iris-test-cti.cti
+        IRIS_FAULT=progressive-complete IRIS_MOCK_STACKED_INFO=1 \
+            /tmp/iris-package-smoke /work/fixture/iris-test-cti.cti
         ;;
     *) echo "Unknown package stage: $stage" >&2; exit 2 ;;
 esac
