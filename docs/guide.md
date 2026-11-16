@@ -30,7 +30,36 @@ Use a simulator runtime exposing serial `test-serial` and include the directory 
 | `GENICAM_CLPROTOCOL` | CLProtocol registration roots for producers that support them. Configure the producer's camera selection separately when required. |
 | `LD_LIBRARY_PATH` | Linux dynamic loader search path. Use it when Iris, the EMVA runtime, or a CTI's shared libraries are outside the configured system library paths. |
 
-List devices with `iris-capture --list producer.cti`. For a single idle device configured for continuous acquisition, use `iris-capture --capture producer.cti [serial]`. Capture uses the current device settings.
+## Command-line tool
+
+`iris-gentl info` lists camera identities across the CTIs on
+`GENICAM_GENTL64_PATH`. Repeat `--cti` to query specific producers. The other
+commands use one CTI and require a unique device. Select by `--serial`, or
+use the `--interface` and `--device` IDs shown by `info`.
+
+```sh
+iris-gentl get --cti producer.cti Width Height PixelFormat
+iris-gentl get --cti producer.cti --set TriggerSelector=FrameStart TriggerSource
+iris-gentl xml --cti producer.cti > camera.xml
+iris-gentl grab 3 --cti producer.cti --timeout 1000 --output frames.raw
+```
+
+- `features [GLOB]` lists feature names, principal types, and current access
+  modes. `get` reads values, `set NAME=VALUE ...` applies writes in the given
+  order, and `exec NAME` issues a command. `--set` applies ordered writes
+  before the selected operation. Writes take effect immediately.
+- `--module` selects `remote`, `device`, `interface`, `system`, or `stream`
+  for node-map commands. `xml` writes the active description to stdout.
+- `event [COUNT]` subscribes to the selected map and prints event IDs and
+  payload sizes. Set the camera's event configuration with `--set` when needed.
+- `grab [COUNT]` uses current camera settings and prints frame dimensions,
+  PFNC format, stride, and byte count. A new `--output` file contains the raw
+  bytes of each complete image in order, including row padding. The command
+  stops on a rejected image or timeout. Use `--stream-only` to leave remote
+  acquisition under external control, and `--trigger NAME` to issue a remote
+  command before each wait.
+
+Run `iris-gentl --help` for the complete option list.
 
 ## Discovery and ownership
 

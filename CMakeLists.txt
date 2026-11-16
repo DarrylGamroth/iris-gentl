@@ -50,6 +50,11 @@ add_executable(iris-capture tests/capture.c tests/allocations.c)
 target_link_libraries(iris-capture PRIVATE iris Threads::Threads ${CMAKE_DL_LIBS})
 target_compile_options(iris-capture PRIVATE -Wall -Wextra -Werror)
 install(TARGETS iris-capture RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+add_executable(iris-gentl tools/gentl.cpp)
+target_compile_features(iris-gentl PRIVATE cxx_std_17)
+target_compile_options(iris-gentl PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(iris-gentl PRIVATE iris Threads::Threads)
+install(TARGETS iris-gentl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(IRIS_BUNDLE_GENAPI)
     include(cmake/BinaryPackage.cmake)
 endif()
@@ -74,6 +79,12 @@ if(BUILD_TESTING)
         set(triggered_mock_environment "trigger_fixture_GENTL_MOCK=1;trigger_fixture_CLPROTOCOL=${IRIS_triggered_CLPROTOCOL}")
         add_test(NAME example-software-trigger COMMAND iris-example-software-trigger "${triggered_cti}")
         set_tests_properties(example-software-trigger PROPERTIES TIMEOUT 10
+            ENVIRONMENT "${triggered_mock_environment};GENICAM_GENTL64_PATH=${triggered_dir};trigger_fixture_ZERO_COPY=0")
+        add_test(NAME gentl-cli-software-trigger COMMAND iris-gentl grab 2 --cti "${triggered_cti}"
+            --stream-only --trigger TriggerSoftware --set TriggerSelector=FrameStart
+            --set TriggerMode=Off --set TriggerSource=Software --set TriggerMode=On)
+        set_tests_properties(gentl-cli-software-trigger PROPERTIES TIMEOUT 10
+            PASS_REGULAR_EXPRESSION "frame=2 width="
             ENVIRONMENT "${triggered_mock_environment};GENICAM_GENTL64_PATH=${triggered_dir};trigger_fixture_ZERO_COPY=0")
     endif()
     if(IRIS_triggered_CTI AND IRIS_triggered_CLPROTOCOL AND IRIS_continuous_CTI)
@@ -100,6 +111,10 @@ if(BUILD_TESTING)
         "-DFEATURES=$<TARGET_FILE:iris-example-features>" "-DCTI=$<TARGET_FILE:iris-test-cti>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/example_features.cmake")
     set_tests_properties(example-features PROPERTIES TIMEOUT 10)
+    add_test(NAME gentl-cli COMMAND "${CMAKE_COMMAND}"
+        "-DCLI=$<TARGET_FILE:iris-gentl>" "-DCTI=$<TARGET_FILE:iris-test-cti>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/gentl_cli.cmake")
+    set_tests_properties(gentl-cli PROPERTIES TIMEOUT 10)
     add_executable(iris-failures tests/failures.c)
     target_link_libraries(iris-failures PRIVATE iris Threads::Threads ${CMAKE_DL_LIBS})
     add_test(NAME failure-recovery COMMAND iris-failures $<TARGET_FILE:iris-test-cti>)
@@ -152,7 +167,7 @@ if(BUILD_TESTING)
                 --filter "${CMAKE_CURRENT_SOURCE_DIR}/inc/internal/"
                 --fail-under-line 90 --print-summary
                 ${CMAKE_BINARY_DIR}
-            DEPENDS iris-capture iris-failures iris-progressive iris-nodes iris-feature-browse iris-feature-batch iris-events iris-feature-values
+            DEPENDS iris-capture iris-gentl iris-failures iris-progressive iris-nodes iris-feature-browse iris-feature-batch iris-events iris-feature-values
                     iris-nonblocking iris-test-cti iris-example-features iris-example-configure-and-acquire
                     iris-example-software-trigger iris-payloads iris-write-stack
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})

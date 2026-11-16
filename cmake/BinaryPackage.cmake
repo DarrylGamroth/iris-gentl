@@ -2,7 +2,7 @@ set(genapi_install_dir "${CMAKE_INSTALL_LIBDIR}/iris-gentl/genapi")
 set(genapi_notice_dir "${CMAKE_INSTALL_DOCDIR}/genapi")
 set_target_properties(iris PROPERTIES INSTALL_RPATH "$ORIGIN/iris-gentl/genapi")
 file(RELATIVE_PATH lib_from_bin "${CMAKE_INSTALL_FULL_BINDIR}" "${CMAKE_INSTALL_FULL_LIBDIR}")
-set_target_properties(iris-capture PROPERTIES INSTALL_RPATH "$ORIGIN/${lib_from_bin}")
+set_target_properties(iris-capture iris-gentl PROPERTIES INSTALL_RPATH "$ORIGIN/${lib_from_bin}")
 
 # Install vendor files as data so CMake does not relink or strip them.
 set(genapi_checksums "")

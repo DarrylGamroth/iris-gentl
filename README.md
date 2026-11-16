@@ -58,15 +58,19 @@ search path. The downloaded runtime is in
 `-DIRIS_BUNDLE_GENAPI=ON` to install GenApi beside Iris with a relative loader
 path. See the [environment settings](docs/guide.md#environment).
 
-To try capture from the build directory, point Iris at a producer and use an idle camera configured for continuous acquisition.
+Use `iris-gentl` to discover cameras, inspect GenApi features, and capture
+frames. Set `GENICAM_GENTL64_PATH` to the directories containing your CTIs
+or pass an absolute CTI path.
 
 ```sh
 export GENICAM_GENTL64_PATH="/path/to/producers${GENICAM_GENTL64_PATH:+:$GENICAM_GENTL64_PATH}"
-build/iris-capture --list producer.cti
-build/iris-capture --capture producer.cti [serial]
+build/iris-gentl info
+build/iris-gentl features --cti producer.cti 'Trigger*'
+build/iris-gentl grab --cti producer.cti --serial CAMERA_SERIAL
 ```
 
-The capture command uses current camera settings and requires one matching device. Supply the optional serial number when several devices match.
+See the [command-line guide](docs/guide.md#command-line-tool) for feature
+configuration, XML export, event inspection, and raw frame output.
 
 ## Documentation
 

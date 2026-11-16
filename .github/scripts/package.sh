@@ -117,6 +117,8 @@ case "$stage" in
         done
         (cd "$genapi" && sha256sum -c "$notices/GenApi-SHA256SUMS")
         "$prefix/bin/iris-capture" --list /work/fixture/iris-test-cti.cti
+        IRIS_FAULT=progressive-complete "$prefix/bin/iris-gentl" grab \
+            --cti /work/fixture/iris-test-cti.cti --stream-only --buffers 1
         gcc -std=c99 -Wall -Wextra -Werror -I"$prefix/include" /src/tests/package_smoke.c \
             -L"$prefix/$libdir" -Wl,-rpath,"$prefix/$libdir" -Wl,-rpath-link,"$genapi" \
             -liris -o /tmp/iris-package-smoke
