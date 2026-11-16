@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-# Run in the requested distribution container, with /src read-only and /work writable.
+# The release workflow runs this inside the target distribution container.
+# Mount the source at /src read-only and the build workspace at /work.
 target=$1
 stage=$2
 case "$target" in

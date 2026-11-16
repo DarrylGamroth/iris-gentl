@@ -39,7 +39,7 @@ jobs:
           fi
           docker run --rm -e IRIS_RELEASE_TAG \
             -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUNNER_TEMP/iris-package:/work" \
-            "$IMAGE" bash /src/ci/package.sh "$TARGET" build
+            "$IMAGE" bash /src/.github/scripts/package.sh "$TARGET" build
       - name: Verify the installed package in a fresh container
         shell: bash
         env:
@@ -48,7 +48,7 @@ jobs:
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUNNER_TEMP/iris-package:/work:ro" \
-            "$IMAGE" bash /src/ci/package.sh "$TARGET" verify
+            "$IMAGE" bash /src/.github/scripts/package.sh "$TARGET" verify
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: iris-${{ matrix.target }}
