@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #ifdef IRIS_TRACE_INVALID_IMAGE
 #include <cstdio>
 #endif
@@ -187,14 +188,14 @@ public:
 iris_status_t begin_read(iris_stream &s)
 {
     std::lock_guard lock(s.mutex);
-    if (s.reader) return fail(IRIS_BUSY, "receive", "reader already active");
+    if (s.reader || s.partial.buffer) return fail(IRIS_BUSY, "receive", "reader already active");
     if (!s.running) return IRIS_STOPPED;
     s.reader = true;
     return IRIS_OK;
 }
 
 iris_status_t receive(iris_stream &s, uint64_t timeout, iris_frame_t &f,
-                      std::unique_lock<std::mutex> &lock)
+                      std::unique_lock<std::mutex> &lock, Buffer **source = nullptr)
 {
     auto &p = *s.device->producer;
     EVENT_NEW_BUFFER_DATA event{};
@@ -296,6 +297,7 @@ iris_status_t receive(iris_stream &s, uint64_t timeout, iris_frame_t &f,
     it->contains_chunks = f.payload.contains_chunk_data;
     it->part_count = f.part_count;
     it->valid_parts = f.parts_status == IRIS_OK;
+    if (source) *source = &*it;
     ++s.stats.outstanding_frames;
     ++s.stats.delivered_frames;
     if (f.status == IRIS_FRAME_INCOMPLETE) ++s.stats.incomplete_frames;
@@ -311,7 +313,7 @@ iris_status_t get_frame(iris_stream_t *s, uint64_t timeout, iris_frame_t *out)
     if (!s) return invalid("receive");
     if (!timeout) {
         std::unique_lock lock(s->mutex, std::try_to_lock);
-        if (!lock || s->reader) return fail(IRIS_BUSY, "receive", "stream reader busy");
+        if (!lock || s->reader || s->partial.buffer) return fail(IRIS_BUSY, "receive", "stream reader busy");
         if (!s->running) return IRIS_STOPPED;
         const auto status = receive(*s, 0, *out, lock);
         if (status != IRIS_OK) *out = {};
@@ -398,7 +400,7 @@ iris_status_t iris_stream_poll(iris_stream_t *s, iris_frame_handler_t handler,
         // Keep the admission lock through the bounded batch. An admitted
         // nonblocking reader never has to reacquire a consumer lock.
         std::unique_lock lock(s->mutex, std::try_to_lock);
-        if (!lock || s->reader) return fail(IRIS_BUSY, "poll", "stream reader busy");
+        if (!lock || s->reader || s->partial.buffer) return fail(IRIS_BUSY, "poll", "stream reader busy");
         if (!s->running) return IRIS_STOPPED;
         while (*delivered < limit) {
             iris_frame_t frame{};
@@ -422,6 +424,141 @@ iris_status_t iris_stream_poll(iris_stream_t *s, iris_frame_handler_t handler,
         return IRIS_OK;
     });
 }
+namespace {
+
+bool progressive_format(uint64_t format)
+{
+    return format == 0x01100003 || format == 0x01100005 ||
+           format == 0x01100025 || format == 0x01100007;
+}
+
+bool same_target(const iris_row_target_t &a, const iris_row_target_t &b)
+{
+    return a.data == b.data && a.capacity == b.capacity && a.width == b.width &&
+           a.height == b.height && a.pixel_format == b.pixel_format;
+}
+
+bool separate_image(const void *base, size_t bytes, const iris_row_target_t &target)
+{
+    const auto src = reinterpret_cast<uintptr_t>(base);
+    const auto dst = reinterpret_cast<uintptr_t>(target.data);
+    return bytes <= UINTPTR_MAX - src && (src + bytes <= dst || dst + bytes <= src);
+}
+
+bool active_image(iris_stream &s, const Buffer &buffer, const iris_row_target_t &target,
+                  size_t bytes, void *&base)
+{
+    const auto h = buffer.handle;
+    size_t width = 0, height = 0, offset = 0, padding = 0, capacity = 0;
+    uint64_t format = 0;
+    int32_t endian = 0;
+    bool8_t composite = 0, chunks = 0;
+    size_t payload_type = 0;
+    return buffer.capacity == bytes &&
+           (!buffer_info(s, h, BUFFER_INFO_PIXEL_ENDIANNESS, endian) || endian != PIXELENDIANNESS_BIG) &&
+           (!buffer_info(s, h, BUFFER_INFO_PAYLOADTYPE, payload_type) || payload_type == PAYLOAD_TYPE_IMAGE) &&
+           (!buffer_info(s, h, BUFFER_INFO_IS_COMPOSITE, composite) || !composite) &&
+           (!buffer_info(s, h, BUFFER_INFO_CONTAINS_CHUNKDATA, chunks) || !chunks) &&
+           buffer_info(s, h, BUFFER_INFO_WIDTH, width) && width == target.width &&
+           buffer_info(s, h, BUFFER_INFO_HEIGHT, height) && height == target.height &&
+           buffer_info(s, h, BUFFER_INFO_PIXELFORMAT, format) && format == target.pixel_format &&
+           buffer_info(s, h, BUFFER_INFO_IMAGEOFFSET, offset) && !offset &&
+           buffer_info(s, h, BUFFER_INFO_XPADDING, padding) && !padding &&
+           buffer_info(s, h, BUFFER_INFO_SIZE, capacity) && capacity >= bytes &&
+           buffer_info(s, h, BUFFER_INFO_BASE, base) && base &&
+           (!buffer.caller_data || base == buffer.caller_data) &&
+           (!buffer.storage || base == buffer.storage) && separate_image(base, bytes, target);
+}
+
+void copy_rows(const iris_row_target_t &target, size_t row_bytes, const void *base,
+               uint32_t first, uint32_t end, bool complete, iris_row_update_t &out)
+{
+    auto *dst = static_cast<unsigned char *>(target.data);
+    const auto *src = static_cast<const unsigned char *>(base);
+    if (end > first) {
+        const size_t offset = first * row_bytes;
+        std::memcpy(dst + offset, src + offset, (end - first) * row_bytes);
+    }
+    out = {first, end - first, complete ? 1u : 0u};
+}
+
+iris_status_t progress_rows(iris_stream &s, const iris_row_target_t &target,
+                            size_t row_bytes, iris_row_update_t &out)
+{
+    Buffer *selected = s.partial.buffer;
+    size_t filled = 0;
+    for (auto &candidate : s.buffers) {
+        if ((selected && selected != &candidate) || candidate.token) continue;
+        bool8_t active = 0;
+        if (!buffer_info(s, candidate.handle, BUFFER_INFO_IS_ACQUIRING, active))
+            return fail(IRIS_NOT_SUPPORTED, "poll rows", "acquiring-buffer flag is unavailable");
+        if (!active) continue;
+        if (!buffer_info(s, candidate.handle, BUFFER_INFO_SIZE_FILLED, filled))
+            return fail(IRIS_NOT_SUPPORTED, "poll rows", "active fill count is unavailable");
+        const size_t frame_bytes = row_bytes * target.height;
+        if (filled > frame_bytes || filled / row_bytes < s.partial.rows)
+            return fail(IRIS_IO_ERROR, "poll rows", "invalid acquiring-buffer fill count");
+        const auto rows = static_cast<uint32_t>(filled / row_bytes);
+        if (rows == s.partial.rows) return IRIS_NO_FRAME;
+        void *base = nullptr;
+        const bool layout_ok = selected || active_image(s, candidate, target, frame_bytes, base);
+        if (!buffer_info(s, candidate.handle, BUFFER_INFO_IS_ACQUIRING, active) || !active)
+            return IRIS_NO_FRAME; // Let the matching completion validate the image.
+        if (!layout_ok)
+            return fail(IRIS_NOT_SUPPORTED, "poll rows", "active image layout is unavailable or incompatible");
+        // The producer contract for this mode guarantees the prefix stays visible
+        // and stable until the completion is consumed and the buffer requeued.
+        const void *source = selected ? s.partial.base : base;
+        copy_rows(target, row_bytes, source, s.partial.rows, rows, false, out);
+        s.partial = {&candidate, target, source, rows};
+        return IRIS_OK;
+    }
+    return IRIS_NO_FRAME;
+}
+
+} // namespace
+
+iris_status_t iris_stream_poll_rows(iris_stream_t *s, const iris_row_target_t *target,
+                                    iris_row_update_t *out)
+{
+    return api("poll rows", [&]() -> iris_status_t {
+        if (!out) return invalid("poll rows");
+        *out = {};
+        if (!s || !target || !target->data || !target->width || !target->height ||
+            !progressive_format(target->pixel_format)) return invalid("poll rows");
+        const auto stride = row_bytes(target->pixel_format, target->width);
+        if (!stride || target->height > target->capacity / stride ||
+            target->capacity > UINTPTR_MAX - reinterpret_cast<uintptr_t>(target->data))
+            return fail(IRIS_BUFFER_TOO_SMALL, "poll rows", "invalid destination size");
+        std::unique_lock lock(s->mutex, std::try_to_lock);
+        if (!lock || s->reader || s->stats.outstanding_frames)
+            return fail(IRIS_BUSY, "poll rows", "stream reader busy");
+        if (!s->running) return IRIS_STOPPED;
+        if (s->partial.buffer && !same_target(s->partial.target, *target))
+            return fail(IRIS_INVALID_STATE, "poll rows", "destination changed before completion");
+        iris_frame_t frame{};
+        Buffer *source = nullptr;
+        auto status = receive(*s, 0, frame, lock, &source);
+        if (status == IRIS_NO_FRAME) return progress_rows(*s, *target, stride, *out);
+        if (status != IRIS_OK) return status;
+        const bool valid = (!s->partial.buffer ||
+                            (s->partial.buffer == source && s->partial.base == frame.data)) &&
+            frame.status == IRIS_FRAME_COMPLETE && frame.data &&
+            frame.width == target->width && frame.height == target->height &&
+            frame.pixel_format == target->pixel_format && frame.stride_bytes == stride &&
+            frame.image_size == stride * target->height && frame.payload.image_offset == 0 &&
+            !frame.payload.contains_chunk_data && separate_image(frame.data, frame.image_size, *target) &&
+            (!(frame.valid & IRIS_FRAME_HAS_PIXEL_ENDIANNESS) ||
+             frame.pixel_endianness != PIXELENDIANNESS_BIG);
+        if (valid) copy_rows(*target, stride, frame.data, s->partial.rows, target->height, true, *out);
+        s->partial = {};
+        status = release_frame(*s, frame, lock, true);
+        if (status != IRIS_OK || !valid) *out = {};
+        if (status != IRIS_OK) return status;
+        return valid ? IRIS_OK : fail(IRIS_IO_ERROR, "poll rows", "invalid or mismatched completion");
+    });
+}
+
 iris_status_t iris_stream_stats(iris_stream_t *s, iris_stream_stats_t *stats)
 {
     return api("stream stats", [&]() -> iris_status_t {

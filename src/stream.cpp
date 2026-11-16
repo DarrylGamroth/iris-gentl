@@ -107,6 +107,7 @@ iris_status_t stop(iris_stream &s)
         std::unique_lock lock(s.mutex);
         s.running = false;
         s.stopping = true;
+        s.partial = {};
         if (s.reader && s.event) {
             lock.unlock();
             record(producer_call("EventKill", [&] {

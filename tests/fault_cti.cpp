@@ -13,6 +13,8 @@ namespace {
 char scenario[32];
 GC_ERROR last_error;
 std::array<unsigned char, 16> pixels{};
+unsigned progressive_poll = 0;
+std::chrono::steady_clock::time_point next_progressive_frame;
 void *announced_memory;
 bool queued, delivered;
 unsigned completions;
@@ -205,13 +207,15 @@ constexpr char node_xml[] = R"xml(
   </Enumeration>
   <Port Name="Device"/>
 </RegisterDescription>)xml";
-std::array<unsigned char, 60> registers{};
+std::array<unsigned char, 100> registers{};
 size_t stacked_calls = 0;
 size_t scalar_writes = 0;
 void (*write_observer)(void *, uint64_t) = nullptr;
 void *write_observer_context = nullptr;
 
 bool mode(const char *name) { return std::strcmp(scenario, name) == 0; }
+bool progressive() { return std::strncmp(scenario, "progressive", 11) == 0; }
+
 bool module_events()
 {
     return mode("events") || mode("events-rollback") || mode("events-oversized") || mode("events-snapshot");
@@ -249,6 +253,7 @@ GC_ERROR info(INFO_DATATYPE kind, T value, INFO_DATATYPE *type, void *out, size_
 void *handle(unsigned id) { return reinterpret_cast<void *>(static_cast<uintptr_t>(id)); }
 bool node_port(PORT_HANDLE port)
 {
+    if (progressive()) return port == handle(4);
     if (module_events()) return port == handle(1) || port == handle(2) || port == handle(3) ||
                                 port == handle(4) || port == handle(5);
     return (mode("nodes") || mode("invalidation-rollback") || mode("invalidation-malformed") ||
@@ -344,7 +349,27 @@ extern "C" GC_IMPORT_EXPORT void iris_test_stack_counts(size_t *stacked, size_t 
     *scalar = scalar_writes;
 }
 
-EXPORT(GCInitLib)() { const char *value = std::getenv("IRIS_FAULT"); std::strncpy(scenario, value ? value : "", sizeof(scenario) - 1); queued = delivered = false; completions = failures = interface_closes = 0; armed = system_open = interface_open = failed_device_open = partial_stream = false; registers.fill(0); registers[40] = registers[52] = 64; stacked_calls = scalar_writes = 0; invalidation_registered = invalidation_pending = false; event_queues = {}; return 0; }
+EXPORT(GCInitLib)()
+{
+    const char *value = std::getenv("IRIS_FAULT");
+    std::strncpy(scenario, value ? value : "", sizeof(scenario) - 1);
+    queued = delivered = false;
+    completions = failures = interface_closes = 0;
+    armed = system_open = interface_open = failed_device_open = partial_stream = false;
+    registers.fill(0);
+    registers[40] = registers[52] = 64;
+    if (progressive()) {
+        registers[64] = mode("progressive-no-frame-start") ? 1 : 0;
+        registers[68] = registers[72] = 1; // Start with both trigger banks enabled.
+        registers[76] = registers[80] = 1; // Both banks initially select Line1.
+        registers[84] = 1;                // Continuous.
+        registers[96] = !mode("progressive-no-frame-start");
+    }
+    stacked_calls = scalar_writes = 0;
+    invalidation_registered = invalidation_pending = false;
+    event_queues = {};
+    return 0;
+}
 EXPORT(GCCloseLib)()
 {
     if (system_open) std::abort();
@@ -488,7 +513,11 @@ EXPORT(DSQueueBuffer)(DS_HANDLE, BUFFER_HANDLE)
 {
     if (mode("throw-requeue") && delivered) throw std::runtime_error("injected requeue exception");
     if (mode("queue") || (mode("requeue") && delivered)) return error(GC_ERR_IO);
-    queued = true; return 0;
+    queued = true;
+    progressive_poll = 0;
+    if (mode("progressive-paced"))
+        next_progressive_frame = std::chrono::steady_clock::now() + std::chrono::milliseconds(2);
+    return 0;
 }
 EXPORT(DSFlushQueue)(DS_HANDLE, ACQ_QUEUE_TYPE)
 {
@@ -518,7 +547,12 @@ EXPORT(DSGetBufferInfo)(DS_HANDLE, BUFFER_HANDLE, BUFFER_INFO_CMD cmd, INFO_DATA
     case BUFFER_INFO_BASE:
         return info(INFO_DATATYPE_PTR, announced_memory && !mode("caller-wrong-base") ?
                     announced_memory : static_cast<void *>(pixels.data()), type, out, size);
+    case BUFFER_INFO_IS_ACQUIRING:
+        if (!progressive()) return error(GC_ERR_NOT_IMPLEMENTED);
+        return info(INFO_DATATYPE_BOOL8, bool8_t(queued && progressive_poll > 0), type, out, size);
     case BUFFER_INFO_IS_INCOMPLETE:
+        if (mode("progressive-incomplete"))
+            return info(INFO_DATATYPE_BOOL8, bool8_t{1}, type, out, size);
         if (mode("multipart-no-status")) return error(GC_ERR_NOT_IMPLEMENTED);
         return info(INFO_DATATYPE_BOOL8, bool8_t(mode("incomplete")), type, out, size);
     case BUFFER_INFO_IMAGEPRESENT: return info(INFO_DATATYPE_BOOL8, bool8_t{1}, type, out, size);
@@ -526,6 +560,11 @@ EXPORT(DSGetBufferInfo)(DS_HANDLE, BUFFER_HANDLE, BUFFER_INFO_CMD cmd, INFO_DATA
                     mode("chunk-typed") ? PAYLOAD_TYPE_CHUNK_ONLY :
                     mode("payload") ? PAYLOAD_TYPE_RAW_DATA : PAYLOAD_TYPE_IMAGE), type, out, size);
     case BUFFER_INFO_SIZE_FILLED:
+        if (progressive() && queued) {
+            const size_t bytes = progressive_poll == 1 ? 6 :
+                mode("progressive-regress") ? 1 : 12;
+            return info(INFO_DATATYPE_SIZET, bytes, type, out, size);
+        }
         if (mode("multipart-no-size") || chunk_data_size()) return error(GC_ERR_NOT_IMPLEMENTED);
         return info(INFO_DATATYPE_SIZET, size_t(mode("gendc-gap") ? 192 : gendc_payload() ? gendc_bytes() :
                     mode("multipart-chunk-only") ? 4 : multipart_chunk() ? 20 : mode("chunk-typed") ? 52 :
@@ -547,7 +586,7 @@ EXPORT(DSGetBufferInfo)(DS_HANDLE, BUFFER_HANDLE, BUFFER_INFO_CMD cmd, INFO_DATA
     case BUFFER_INFO_CHUNKLAYOUTID:
         return info(INFO_DATATYPE_UINT64, uint64_t{123}, type, out, size);
     case BUFFER_INFO_WIDTH:
-        return info(INFO_DATATYPE_SIZET, size_t{mode("packed-odd") ? 3u : 4u}, type, out, size);
+        return info(INFO_DATATYPE_SIZET, size_t{progressive() ? 2u : mode("packed-odd") ? 3u : 4u}, type, out, size);
     case BUFFER_INFO_HEIGHT:
         return info(INFO_DATATYPE_SIZET, size_t{mode("packed") || mode("packed-odd") ? 2u : 4u}, type, out, size);
     case BUFFER_INFO_DELIVERED_IMAGEHEIGHT:
@@ -559,7 +598,8 @@ EXPORT(DSGetBufferInfo)(DS_HANDLE, BUFFER_HANDLE, BUFFER_INFO_CMD cmd, INFO_DATA
     case BUFFER_INFO_XPADDING:
         return info(INFO_DATATYPE_SIZET, size_t{mode("packed") ? 2u : 0u}, type, out, size);
     case BUFFER_INFO_PIXELFORMAT:
-        return info(INFO_DATATYPE_UINT64, uint64_t{mode("packed") || mode("packed-odd") ? 0x010A0046u : 0x01080001u}, type, out, size);
+        return info(INFO_DATATYPE_UINT64, uint64_t{progressive() ? 0x01100007u :
+                    mode("packed") || mode("packed-odd") ? 0x010A0046u : 0x01080001u}, type, out, size);
     case BUFFER_INFO_PIXELFORMAT_NAMESPACE: return info(INFO_DATATYPE_UINT64, uint64_t{PIXELFORMAT_NAMESPACE_PFNC_32BIT}, type, out, size);
     default: return error(GC_ERR_NOT_IMPLEMENTED);
     }
@@ -703,6 +743,20 @@ EXPORT(EventGetData)(EVENT_HANDLE event_handle, void *out, size_t *size, uint64_
         std::this_thread::sleep_for(std::chrono::milliseconds(timeout));
         return error(GC_ERR_TIMEOUT);
     }
+    if (progressive()) {
+        if (mode("progressive-controls") &&
+            (!registers[88] || (registers[84] == 0 && completions)))
+            return error(GC_ERR_TIMEOUT);
+        if (mode("progressive-paced") && std::chrono::steady_clock::now() < next_progressive_frame)
+            return error(GC_ERR_TIMEOUT);
+        ++progressive_poll;
+        const unsigned bytes = progressive_poll == 1 ? 6 : progressive_poll == 2 ? 12 : 16;
+        for (unsigned i = 0; i < bytes; ++i) pixels[i] = static_cast<unsigned char>(i + 1);
+        if (progressive_poll < 3 && !mode("progressive-complete"))
+            return error(GC_ERR_TIMEOUT);
+        if (mode("progressive-complete"))
+            for (unsigned i = 0; i < pixels.size(); ++i) pixels[i] = static_cast<unsigned char>(i + 1);
+    }
     EVENT_NEW_BUFFER_DATA event{handle(mode("event") ? 99 : 6), nullptr};
     std::memcpy(out, &event, sizeof(event));
     *size = sizeof(event);
@@ -768,10 +822,72 @@ EXPORT(EventGetInfo)(EVENT_HANDLE event, EVENT_INFO_CMD cmd, INFO_DATATYPE *type
                 type, out, size);
 }
 EXPORT(EventKill)(EVENT_HANDLE) { return error(GC_ERR_NOT_IMPLEMENTED); }
+constexpr char progressive_xml[] = R"xml(<RegisterDescription xmlns="http://www.genicam.org/GenApi/Version_1_1"
+  ModelName="ProgressiveFixture" VendorName="Iris" StandardNameSpace="None"
+  SchemaMajorVersion="1" SchemaMinorVersion="1" SchemaSubMinorVersion="0"
+  MajorVersion="1" MinorVersion="0" SubMinorVersion="0"
+  ProductGuid="c15886c4-f95c-44f6-8db9-3439e5a04cac" VersionGuid="14ccaba2-8fbe-4bff-a0a2-dc2242df430c">
+  <Category Name="Root"><pFeature>Width</pFeature><pFeature>Height</pFeature><pFeature>PixelFormat</pFeature></Category>
+  <Port Name="Device"/>
+  <Integer Name="Width"><Value>2</Value></Integer>
+  <Integer Name="Height"><Value>4</Value></Integer>
+  <Enumeration Name="PixelFormat">
+    <EnumEntry Name="Mono16"><Value>17825799</Value></EnumEntry><Value>17825799</Value>
+  </Enumeration>
+  <Enumeration Name="TriggerSelector">
+    <EnumEntry Name="FrameStart"><pIsAvailable>FrameStartAvailable</pIsAvailable><Value>0</Value></EnumEntry>
+    <EnumEntry Name="ExposureStart"><Value>1</Value></EnumEntry>
+    <pValue>TriggerSelectorReg</pValue><pSelected>TriggerMode</pSelected><pSelected>TriggerSource</pSelected>
+  </Enumeration>
+  <Enumeration Name="TriggerMode">
+    <EnumEntry Name="Off"><Value>0</Value></EnumEntry>
+    <EnumEntry Name="On"><Value>1</Value></EnumEntry><pValue>TriggerModeReg</pValue>
+  </Enumeration>
+  <Enumeration Name="TriggerSource">
+    <EnumEntry Name="Line0"><pIsAvailable>FrameStartSelected</pIsAvailable><Value>0</Value></EnumEntry>
+    <EnumEntry Name="Line1"><Value>1</Value></EnumEntry>
+    <pValue>TriggerSourceReg</pValue>
+  </Enumeration>
+  <Enumeration Name="AcquisitionMode">
+    <EnumEntry Name="SingleFrame"><Value>0</Value></EnumEntry>
+    <EnumEntry Name="Continuous"><Value>1</Value></EnumEntry><pValue>AcquisitionModeReg</pValue>
+  </Enumeration>
+  <Command Name="AcquisitionStart"><pValue>AcquisitionCommandReg</pValue><CommandValue>1</CommandValue></Command>
+  <Command Name="AcquisitionStop"><pValue>AcquisitionCommandReg</pValue><CommandValue>0</CommandValue></Command>
+  <IntSwissKnife Name="FrameStartSelected">
+    <pVariable Name="SELECTOR">TriggerSelectorReg</pVariable><Formula>SELECTOR = 0</Formula>
+  </IntSwissKnife>
+  <IntReg Name="TriggerSelectorReg">
+    <Address>64</Address><Length>4</Length><AccessMode>RW</AccessMode><pPort>Device</pPort>
+    <Cachable>NoCache</Cachable><Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <IntReg Name="TriggerModeReg">
+    <Address>68</Address><pIndex Offset="4">TriggerSelectorReg</pIndex><Length>4</Length>
+    <AccessMode>RW</AccessMode><pPort>Device</pPort><Cachable>NoCache</Cachable><Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <IntReg Name="TriggerSourceReg">
+    <Address>76</Address><pIndex Offset="4">TriggerSelectorReg</pIndex><Length>4</Length>
+    <AccessMode>RW</AccessMode><pPort>Device</pPort><Cachable>NoCache</Cachable><Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <IntReg Name="AcquisitionModeReg">
+    <Address>84</Address><Length>4</Length><AccessMode>RW</AccessMode><pPort>Device</pPort>
+    <Cachable>NoCache</Cachable><Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <IntReg Name="AcquisitionCommandReg">
+    <Address>88</Address><Length>4</Length><AccessMode>RW</AccessMode><pPort>Device</pPort>
+    <Cachable>NoCache</Cachable><Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <IntReg Name="FrameStartAvailable">
+    <Address>96</Address><Length>4</Length><AccessMode>RO</AccessMode><pPort>Device</pPort>
+    <Cachable>NoCache</Cachable><Endianess>LittleEndian</Endianess>
+  </IntReg>
+</RegisterDescription>)xml";
+
 void local_xml_url(char (&url)[96], uint64_t address = xml_address)
 {
     std::snprintf(url, sizeof(url), "local:node-fixture.xml;%llx;%zx",
-                  static_cast<unsigned long long>(address), sizeof(node_xml) - 1);
+                  static_cast<unsigned long long>(address),
+                  progressive() ? sizeof(progressive_xml) - 1 : sizeof(node_xml) - 1);
 }
 
 EXPORT(GCGetNumPortURLs)(PORT_HANDLE port, uint32_t *count)
@@ -847,6 +963,10 @@ EXPORT(GCGetPortInfo)(PORT_HANDLE port, PORT_INFO_CMD cmd, INFO_DATATYPE *type, 
 EXPORT(GCReadPort)(PORT_HANDLE port, uint64_t address, void *out, size_t *size)
 {
     if (!node_port(port)) return error(GC_ERR_IO);
+    if (progressive() && address == xml_address && *size == sizeof(progressive_xml) - 1) {
+        std::memcpy(out, progressive_xml, *size);
+        return GC_ERR_SUCCESS;
+    }
     if (address == xml_address && *size == sizeof(node_xml) - 1) {
         std::memcpy(out, node_xml, *size);
         return GC_ERR_SUCCESS;

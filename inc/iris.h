@@ -1514,6 +1514,47 @@ iris_status_t iris_stream_wait_frame(iris_stream_t *stream, uint64_t timeout_ms,
  */
 iris_status_t iris_stream_release_frame(iris_stream_t *stream, iris_frame_t *frame);
 
+/** Destination for one progressive image. The storage is owned by the caller. */
+typedef struct {
+    void *data;             /**< Packed output rows with no padding. */
+    size_t capacity;        /**< Writable bytes at data. */
+    uint64_t pixel_format;  /**< PFNC unpacked monochrome pixel format. */
+    uint32_t width;         /**< Image width in pixels. */
+    uint32_t height;        /**< Image height in rows. */
+} iris_row_target_t;
+
+/** Rows copied by one poll and whether the matching frame completed. */
+typedef struct {
+    uint32_t first_row;     /**< Zero-based start of the newly copied rows. */
+    uint32_t row_count;     /**< Number of new rows. Can be zero at completion. */
+    uint32_t complete;      /**< Nonzero after the matching buffer is validated and requeued. */
+} iris_row_update_t;
+
+/**
+ * @brief Poll one progressive monochrome frame without waiting.
+ *
+ * Use only with producers and configurations that guarantee that SIZE_FILLED
+ * on an acquiring buffer reports a contiguous, CPU-visible prefix of image
+ * bytes. This is a producer-specific guarantee. The image must be contiguous,
+ * little-endian, unpacked Mono10/12/14/16, with no offset, padding or chunks.
+ *
+ * Use a destination separate from the announced buffers. Keep the same
+ * destination and geometry until complete is set. The caller
+ * must invalidate any rows already published if a later poll fails. Stop
+ * before abandoning a partially copied frame. Use one reader per stream and
+ * avoid mixing the progressive and complete-frame receive APIs during a frame.
+ * The caller never receives a pointer to an acquiring buffer. Iris copies
+ * only newly available whole rows and requeues the matching completed buffer.
+ *
+ * @param[in] stream Running stream.
+ * @param[in] target Destination and expected image layout.
+ * @param[out] update Receives copied rows and completion status.
+ * @return IRIS_OK for progress or completion, IRIS_NO_FRAME when no rows are
+ * available yet, IRIS_STOPPED, IRIS_BUSY, or a negative status.
+ */
+iris_status_t iris_stream_poll_rows(iris_stream_t *stream, const iris_row_target_t *target,
+                                    iris_row_update_t *update);
+
 /** Inline frame handler for iris_stream_poll().
  * @param[in] client_data Application pointer supplied to poll.
  * @param[in] frame Read-only completion and image view, borrowed for this call.

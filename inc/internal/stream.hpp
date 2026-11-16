@@ -67,4 +67,10 @@ struct alignas(iris::cache_line_size) iris_stream {
     std::unique_ptr<iris_node_map> map;
     iris_node_map *remote_map = nullptr;
     std::vector<iris::Buffer> buffers;
+    struct {
+        iris::Buffer *buffer = nullptr;
+        iris_row_target_t target{};
+        const void *base = nullptr;
+        uint32_t rows = 0;
+    } partial;
 };
