@@ -99,7 +99,7 @@ if(BUILD_TESTING)
         add_test(NAME example-software-trigger COMMAND iris-example-software-trigger "${triggered_cti}")
         set_tests_properties(example-software-trigger PROPERTIES TIMEOUT 10
             ENVIRONMENT "${triggered_mock_environment};GENICAM_GENTL64_PATH=${triggered_dir};trigger_fixture_ZERO_COPY=0")
-        add_test(NAME gentl-cli-software-trigger COMMAND iris-gentl grab 2 --cti "${triggered_cti}"
+        add_test(NAME gentl-cli-software-trigger COMMAND iris-gentl acquire 2 --cti "${triggered_cti}"
             --stream-only --trigger TriggerSoftware --set TriggerSelector=FrameStart
             --set TriggerMode=Off --set TriggerSource=Software --set TriggerMode=On)
         set_tests_properties(gentl-cli-software-trigger PROPERTIES TIMEOUT 10
@@ -145,6 +145,9 @@ if(BUILD_TESTING)
         "-DFEATURES=$<TARGET_FILE:iris-example-features>" "-DCTI=$<TARGET_FILE:iris-test-cti>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/example_features.cmake")
     set_tests_properties(example-features PROPERTIES TIMEOUT 10)
+    add_test(NAME example-mock-software-trigger COMMAND iris-example-software-trigger $<TARGET_FILE:iris-test-cti>)
+    set_tests_properties(example-mock-software-trigger PROPERTIES TIMEOUT 10
+        ENVIRONMENT "IRIS_FAULT=progressive-trigger")
     add_test(NAME gentl-cli COMMAND "${CMAKE_COMMAND}"
         "-DCLI=$<TARGET_FILE:iris-gentl>" "-DCTI=$<TARGET_FILE:iris-test-cti>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/gentl_cli.cmake")

@@ -26,7 +26,7 @@ file(MAKE_DIRECTORY "${scan_dir}")
 file(CREATE_LINK "${CTI}" "${scan_dir}/${cti_name}" SYMBOLIC)
 set(ENV{GENICAM_GENTL64_PATH} "${scan_dir}:${scan_dir}")
 set(ENV{IRIS_FAULT} example)
-run_cli("^0$" "Usage: iris-gentl" --help)
+run_cli("^0$" "Usage: iris-gentl.*acquire \\[COUNT\\]" --help)
 run_cli("^0$" "test-interface.*test-device.*test-serial" info)
 run_cli("^0$" "test-interface.*test-device.*test-serial" info "--cti=${cti_name}" --serial test-serial)
 run_cli("^0$" "\"serial\":\"test-serial\"" info "--cti=${cti_name}" --json)
@@ -67,7 +67,7 @@ run_cli("^0$" "^$" exec --cti "${CTI}" TriggerSoftware)
 run_cli("^0$" "<RegisterDescription" xml --cti "${CTI}")
 run_cli("^1$" "no device matches" get --cti "${CTI}" --serial missing Width)
 run_cli("^2$" "expected NAME=VALUE" set --cti "${CTI}" Width)
-run_cli("^2$" "invalid count" grab --cti "${CTI}" 0)
+run_cli("^2$" "invalid count" acquire --cti "${CTI}" 0)
 
 set(before "${CMAKE_CURRENT_BINARY_DIR}/iris-before-${suffix}.snapshot")
 set(after "${CMAKE_CURRENT_BINARY_DIR}/iris-after-${suffix}.snapshot")
@@ -105,12 +105,12 @@ run_cli("^0$" [=["event":"1234".*"name":"EventExposureEndTimestamp","type":"inte
 run_cli("^0$" "EventExposureEndTimestamp: Iris status -14" event --cti "${CTI}")
 
 set(ENV{IRIS_FAULT} progressive-complete)
-run_cli("^0$" "\"width\":2" grab --cti "${CTI}" --stream-only --buffers 1 --json)
+run_cli("^0$" "\"width\":2" acquire --cti "${CTI}" --stream-only --buffers 1 --json)
 set(output_file "${CMAKE_CURRENT_BINARY_DIR}/iris-gentl-${suffix}.raw")
 run_cli("^0$" "frame=2 width=2 height=4 pfnc=0x1100007 stride=4 bytes=16"
-    grab 2 --cti "${CTI}" --stream-only --buffers 1 --output "${output_file}")
+    acquire 2 --cti "${CTI}" --stream-only --buffers 1 --output "${output_file}")
 run_cli("^1$" "cannot create output file"
-    grab --cti "${CTI}" --stream-only --buffers 1 --output "${output_file}")
+    acquire --cti "${CTI}" --stream-only --buffers 1 --output "${output_file}")
 file(READ "${output_file}" bytes HEX)
 file(REMOVE "${output_file}")
 if(NOT bytes STREQUAL "0102030405060708090a0b0c0d0e0f100102030405060708090a0b0c0d0e0f10")
@@ -118,7 +118,7 @@ if(NOT bytes STREQUAL "0102030405060708090a0b0c0d0e0f100102030405060708090a0b0c0
 endif()
 
 set(ENV{IRIS_FAULT} progressive-incomplete)
-run_cli("^1$" "received a rejected image" grab --cti "${CTI}" --stream-only --buffers 1)
+run_cli("^1$" "received a rejected image" acquire --cti "${CTI}" --stream-only --buffers 1)
 
 run_cli("^0$" "complete=0 incomplete=3 unsupported_payload=0 invalid_image=0 timeouts=0.*interval_samples=0"
     play 3 --cti "${CTI}" --stream-only --buffers 1)
@@ -135,7 +135,16 @@ set(ENV{IRIS_FAULT} progressive-complete)
 run_cli("^0$" "\"complete\":3,\"incomplete\":0.*\"timeouts\":0.*\"interval_samples\":2.*\"mean_interval_ns\":"
     play 3 --cti "${CTI}" --stream-only --buffers 1 --json)
 run_cli("^0$" "complete=100.*interval_samples=99 min_interval_ns=" play --cti "${CTI}" --stream-only --buffers 1)
-run_cli("^2$" "--output requires grab" play --cti "${CTI}" --output "${output_file}")
+run_cli("^2$" "--output requires acquire" play --cti "${CTI}" --output "${output_file}")
+
+set(ENV{IRIS_FAULT} progressive-trigger)
+set(trigger_args --cti "${CTI}" --stream-only --buffers 1 --timeout 25
+    --set TriggerSelector=FrameStart --set TriggerMode=Off --set TriggerSource=Software --set TriggerMode=On)
+run_cli("^1$" "wait for frame: Iris status 2" acquire ${trigger_args})
+run_cli("^1$" "TriggerSoftware: Iris status -" acquire ${trigger_args}
+    --set TriggerSource=Line1 --trigger TriggerSoftware)
+run_cli("^0$" "frame=2 width=2 height=4 pfnc=0x1100007 stride=4 bytes=16"
+    acquire 2 ${trigger_args} --trigger TriggerSoftware)
 
 set(ENV{IRIS_FAULT} events-snapshot)
 run_cli("^0$" "event=1234 bytes=12 host_timestamp_ns=[0-9]+ device_timestamp=0.*EventCounter=40"

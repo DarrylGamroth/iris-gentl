@@ -36,7 +36,7 @@ constexpr char usage[] =
     "  snapshot NAME ...  Save feature values with their current selector settings\n"
     "  diff BEFORE AFTER  Compare two snapshots\n"
     "  event [COUNT]    Print GenTL events and decoded features (default: 1)\n"
-    "  grab [COUNT]     Receive complete images (default: 1)\n"
+    "  acquire [COUNT]  Acquire complete frames (default: 1)\n"
     "  play [COUNT]     Summarize capture results and cadence (default: 100 attempts)\n"
     "\n"
     "  --cti PATH       CTI path or filename. Repeat for info. With no CTI,\n"
@@ -51,7 +51,7 @@ constexpr char usage[] =
     "  --buffers N      Capture with N announced buffers\n"
     "  --stream-only    Capture without issuing remote start and stop\n"
     "  --trigger NAME   Execute a remote command before each frame wait\n"
-    "  --output FILE    Save grabbed image bytes, including padding, in order\n"
+    "  --output FILE    Save acquired image bytes, including padding, in order\n"
     "  --json           Write one JSON object per result\n"
     "  -h, --help       Show help\n";
 } // namespace
@@ -546,7 +546,7 @@ bool run(std::string_view command, const Options &options)
 {
     const auto &args = options.args;
     const bool diagnostics = command == "play";
-    const bool capturing = command == "grab" || diagnostics;
+    const bool capturing = command == "acquire" || diagnostics;
     const bool events = command == "event";
     const bool info = command == "info";
     const bool set = command == "set";
@@ -570,9 +570,9 @@ bool run(std::string_view command, const Options &options)
     if (!info && options.producers.size() != 1)
         throw std::invalid_argument("this command requires exactly one --cti");
     if (!capturing && (options.buffers || options.stream_only || !options.trigger.empty()))
-        throw std::invalid_argument("buffer, stream-only and trigger options require grab or play");
-    if (command != "grab" && !options.output.empty())
-        throw std::invalid_argument("--output requires grab");
+        throw std::invalid_argument("buffer, stream-only and trigger options require acquire or play");
+    if (command != "acquire" && !options.output.empty())
+        throw std::invalid_argument("--output requires acquire");
     if ((info && !options.assignments.empty()) || (capturing && options.module != "remote"))
         throw std::invalid_argument("invalid command options; see --help");
     if (options.json && (command == "xml" || command == "exec" || set))

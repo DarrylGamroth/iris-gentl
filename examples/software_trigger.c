@@ -96,8 +96,10 @@ static int expect_no_frame(iris_stream_t *stream)
 int main(int argc, char **argv)
 {
     const char *mock = getenv("trigger_fixture_GENTL_MOCK");
-    if (argc != 2 || !mock || strcmp(mock, "1") != 0) {
-        fprintf(stderr, "Usage: trigger_fixture_GENTL_MOCK=1 %s triggered_MOCK_CTI\n", argv[0]);
+    const char *fixture = getenv("IRIS_FAULT");
+    const int in_tree = fixture && strcmp(fixture, "progressive-trigger") == 0;
+    if (argc != 2 || (!in_tree && (!mock || strcmp(mock, "1") != 0))) {
+        fprintf(stderr, "Usage: IRIS_FAULT=progressive-trigger %s MOCK_CTI\n", argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -107,12 +109,12 @@ int main(int argc, char **argv)
     iris_node_map_t *remote = NULL;
     iris_stream_t *stream = NULL;
     iris_device_info_t camera;
-    // The triggered mock has no remote AcquisitionStart or AcquisitionStop.
-    const iris_start_options_t options = {0, IRIS_ACQUISITION_STREAM_ONLY, NULL};
+    // The in-tree fixture supports one announced buffer. Both mocks accept stream-only startup.
+    const iris_start_options_t options = {in_tree ? 1u : 0u, IRIS_ACQUISITION_STREAM_ONLY, NULL};
     int ok = CHECK(iris_context_create(&context)) &&
              CHECK(iris_discover(context, argv[1], 1000, &devices));
     if (ok && iris_device_list_count(devices) != 1) {
-        fputs("Expected exactly one triggered mock device\n", stderr);
+        fputs("Expected exactly one mock device\n", stderr);
         ok = 0;
     }
     if (ok && CHECK(iris_device_list_get(devices, 0, &camera))) {

@@ -208,6 +208,7 @@ constexpr char node_xml[] = R"xml(
   <Port Name="Device"/>
 </RegisterDescription>)xml";
 std::array<unsigned char, 100> registers{};
+constexpr size_t software_trigger_register = 92;
 size_t stacked_calls = 0;
 size_t scalar_writes = 0;
 void (*write_observer)(void *, uint64_t) = nullptr;
@@ -529,6 +530,7 @@ EXPORT(DSStartAcquisition)(DS_HANDLE, ACQ_START_FLAGS, uint64_t)
 {
     if (mode("start")) return error(GC_ERR_IO);
     armed = true;
+    registers[software_trigger_register] = 0;
     if (mode("armed-throw")) throw std::runtime_error("start threw after arming");
     if (mode("armed-error")) return error(GC_ERR_IO);
     return GC_ERR_SUCCESS;
@@ -539,6 +541,7 @@ EXPORT(DSStopAcquisition)(DS_HANDLE, ACQ_STOP_FLAGS)
     if ((mode("stop") || mode("armed-error") || mode("armed-throw")) && !failures++)
         return error(GC_ERR_BUSY);
     armed = false;
+    registers[software_trigger_register] = 0;
     return 0;
 }
 EXPORT(DSGetBufferInfo)(DS_HANDLE, BUFFER_HANDLE, BUFFER_INFO_CMD cmd, INFO_DATATYPE *type, void *out, size_t *size)
@@ -740,7 +743,9 @@ EXPORT(EventGetData)(EVENT_HANDLE event_handle, void *out, size_t *size, uint64_
     if (mode("throw-event")) throw std::runtime_error("injected event exception");
     if (mode("abort")) return error(GC_ERR_ABORT);
     if (mode("progressive") && timeout) return error(GC_ERR_INVALID_PARAMETER);
-    if ((!queued && !mode("multipart-duplicate")) || mode("timeout")) {
+    const bool triggered_capture = mode("progressive-trigger");
+    if ((!queued && !mode("multipart-duplicate")) || mode("timeout") ||
+        (triggered_capture && !registers[software_trigger_register])) {
         std::this_thread::sleep_for(std::chrono::milliseconds(timeout));
         return error(GC_ERR_TIMEOUT);
     }
@@ -751,7 +756,7 @@ EXPORT(EventGetData)(EVENT_HANDLE event_handle, void *out, size_t *size, uint64_
         if (mode("progressive-paced") && std::chrono::steady_clock::now() < next_progressive_frame)
             return error(GC_ERR_TIMEOUT);
         ++progressive_poll;
-        const unsigned bytes = mode("progressive-complete") || progressive_poll >= 3 ? 16 :
+        const unsigned bytes = triggered_capture || mode("progressive-complete") || progressive_poll >= 3 ? 16 :
                                progressive_poll == 1 ? 6 : 12;
         auto *image = announced_memory ? static_cast<unsigned char *>(announced_memory) : pixels.data();
         for (unsigned i = 0; i < bytes; ++i) image[i] = static_cast<unsigned char>(i + 1);
@@ -762,6 +767,7 @@ EXPORT(EventGetData)(EVENT_HANDLE event_handle, void *out, size_t *size, uint64_
     *size = sizeof(event);
     queued = false;
     delivered = true;
+    if (triggered_capture) registers[software_trigger_register] = 0;
     ++completions;
     if (mode("chunk-typed")) {
         const uint32_t counter = 41 + completions;
@@ -826,8 +832,12 @@ constexpr char progressive_xml[] = R"xml(<RegisterDescription xmlns="http://www.
   ModelName="ProgressiveFixture" VendorName="Iris" StandardNameSpace="None"
   SchemaMajorVersion="1" SchemaMinorVersion="1" SchemaSubMinorVersion="0"
   MajorVersion="1" MinorVersion="0" SubMinorVersion="0"
-  ProductGuid="c15886c4-f95c-44f6-8db9-3439e5a04cac" VersionGuid="14ccaba2-8fbe-4bff-a0a2-dc2242df430c">
-  <Category Name="Root"><pFeature>Width</pFeature><pFeature>Height</pFeature><pFeature>PixelFormat</pFeature></Category>
+  ProductGuid="c15886c4-f95c-44f6-8db9-3439e5a04cac" VersionGuid="a458311a-bda4-4937-84c7-66037ddfc720">
+  <Category Name="Root">
+    <pFeature>Width</pFeature><pFeature>Height</pFeature><pFeature>PixelFormat</pFeature>
+    <pFeature>TriggerSelector</pFeature><pFeature>TriggerMode</pFeature><pFeature>TriggerSource</pFeature>
+    <pFeature>TriggerSoftware</pFeature>
+  </Category>
   <Port Name="Device"/>
   <Integer Name="Width"><Value>2</Value></Integer>
   <Integer Name="Height"><Value>4</Value></Integer>
@@ -846,8 +856,12 @@ constexpr char progressive_xml[] = R"xml(<RegisterDescription xmlns="http://www.
   <Enumeration Name="TriggerSource">
     <EnumEntry Name="Line0"><pIsAvailable>FrameStartSelected</pIsAvailable><Value>0</Value></EnumEntry>
     <EnumEntry Name="Line1"><Value>1</Value></EnumEntry>
+    <EnumEntry Name="Software"><pIsAvailable>FrameStartSelected</pIsAvailable><Value>2</Value></EnumEntry>
     <pValue>TriggerSourceReg</pValue>
   </Enumeration>
+  <Command Name="TriggerSoftware" NameSpace="Standard">
+    <pValue>SoftwareTriggerReg</pValue><CommandValue>1</CommandValue>
+  </Command>
   <Enumeration Name="AcquisitionMode">
     <EnumEntry Name="SingleFrame"><Value>0</Value></EnumEntry>
     <EnumEntry Name="Continuous"><Value>1</Value></EnumEntry><pValue>AcquisitionModeReg</pValue>
@@ -875,6 +889,10 @@ constexpr char progressive_xml[] = R"xml(<RegisterDescription xmlns="http://www.
   </IntReg>
   <IntReg Name="AcquisitionCommandReg">
     <Address>88</Address><Length>4</Length><AccessMode>RW</AccessMode><pPort>Device</pPort>
+    <Cachable>NoCache</Cachable><Endianess>LittleEndian</Endianess>
+  </IntReg>
+  <IntReg Name="SoftwareTriggerReg">
+    <Address>92</Address><Length>4</Length><AccessMode>RW</AccessMode><pPort>Device</pPort>
     <Cachable>NoCache</Cachable><Endianess>LittleEndian</Endianess>
   </IntReg>
   <IntReg Name="FrameStartAvailable">
@@ -991,6 +1009,12 @@ EXPORT(GCWritePort)(PORT_HANDLE port, uint64_t address, const void *value, size_
     if (!node_port(port)) return error(GC_ERR_IO);
     if (address > registers.size() || *size > registers.size() - address)
         return error(GC_ERR_INVALID_ADDRESS);
+    if (mode("progressive-trigger") && address == software_trigger_register && *size == 4) {
+        // FrameStart must be selected, enabled and sourced from Software.
+        if (!armed || registers[64] != 0 || registers[68] != 1 || registers[76] != 2 ||
+            registers[software_trigger_register])
+            return error(GC_ERR_NOT_AVAILABLE);
+    }
     std::memcpy(registers.data() + address, value, *size);
     ++scalar_writes;
     if (write_observer) write_observer(write_observer_context, address);

@@ -69,7 +69,7 @@ or pass an absolute CTI path.
 export GENICAM_GENTL64_PATH="/path/to/producers${GENICAM_GENTL64_PATH:+:$GENICAM_GENTL64_PATH}"
 build/iris-gentl info
 build/iris-gentl features --cti producer.cti 'Trigger*'
-build/iris-gentl grab --cti producer.cti --serial CAMERA_SERIAL
+build/iris-gentl acquire --cti producer.cti --serial CAMERA_SERIAL
 ```
 
 See the [command-line guide](docs/guide.md#command-line-tool) for feature

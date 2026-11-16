@@ -47,19 +47,41 @@ build/examples/iris-example-configure-and-acquire continuousSDK3GenTL.cti test-s
 
 The last argument uses the camera's exposure unit, which is microseconds on this simulator. Use an idle device that can acquire continuously. The program exits with an error if it cannot obtain eight complete frames within five seconds.
 
-## Software-triggered capture in C
+## Software-triggered capture with the CLI
 
-[software_trigger.c](software_trigger.c) uses `iris_feature_write_batch` to select `FrameStart`, turn `TriggerMode` off, select `TriggerSource=Software`, then turn `TriggerMode` on. It reads back the final settings before starting the host stream. The mock supports one trigger selector and source. It uses `IRIS_ACQUISITION_STREAM_ONLY` because the fixture has no remote `AcquisitionStart` or `AcquisitionStop`. [GenICam SFNC trigger controls](https://www.emva.org/wp-content/uploads/GenICam_SFNC_v2_8.pdf)
-
-The example first verifies that the stream times out without a trigger. It executes `TriggerSoftware`, waits up to one second for a completion, and releases the borrowed frame even if the image is rejected. A second wait must time out, confirming that the mock delivered one frame for the command. The example then stops and closes the stream, device, and context.
-
-Rebuild the triggered mock CTI and test CLProtocol library with the SFNC trigger nodes before running the example.
+Build the in-tree mock CTI and CLI. The mock uses the GenTL header and needs
+no camera SDK.
 
 ```sh
-triggered="$(cd ../trigger_fixtureGenTL/build-genapi351 && pwd)"
-GENICAM_GENTL64_PATH="$triggered" \
-trigger_fixture_GENTL_MOCK=1 trigger_fixture_ZERO_COPY=0 trigger_fixture_CLPROTOCOL="$triggered/libCLProtocol_test.so" \
-  build/examples/iris-example-software-trigger trigger_fixture.cti
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build --target iris-gentl iris-test-cti
+IRIS_FAULT=progressive-trigger build/iris-gentl acquire 2 \
+  --cti "$PWD/build/iris-test-cti.cti" --stream-only --buffers 1 \
+  --set TriggerSelector=FrameStart --set TriggerMode=Off \
+  --set TriggerSource=Software --set TriggerMode=On \
+  --trigger TriggerSoftware
 ```
 
-To run it through CTest, configure `IRIS_triggered_CTI` and `IRIS_triggered_CLPROTOCOL` as described in the [simulator settings](../docs/guide.md#optional-external-simulators), then run `ctest --test-dir build -R '^example-software-trigger$' --output-on-failure`. The example uses the triggered mock's copy path. Its native DMA ring requires an exact buffer count and rejects Iris's `TLParamsLocked` write once native buffers are announced.
+The CLI starts the host stream, issues `TriggerSoftware` before each wait,
+and releases each completed frame. The mock returns two 2 × 4 Mono16
+images, each 16 bytes. Add `--output frames.raw` to save them in a new file.
+
+## Software-triggered capture in C
+
+[software_trigger.c](software_trigger.c) uses `iris_feature_write_batch` to
+apply the same settings and reads them back. It verifies that the stream
+times out before the trigger, releases the completed frame, and waits for
+another timeout to confirm exactly one completion. It then stops and
+closes the stream, device, and context. [GenICam SFNC trigger controls](https://www.emva.org/wp-content/uploads/GenICam_SFNC_v2_8.pdf)
+
+```sh
+cmake --build build --target iris-example-software-trigger iris-test-cti
+IRIS_FAULT=progressive-trigger \
+  build/examples/iris-example-software-trigger "$PWD/build/iris-test-cti.cti"
+ctest --test-dir build -R '^example-mock-software-trigger$' --output-on-failure
+```
+
+The C example also runs with the triggered mock copy path and its test CLProtocol
+library. Configure `IRIS_triggered_CTI` and `IRIS_triggered_CLPROTOCOL` as described in
+the [optional simulator settings](../docs/guide.md#optional-external-simulators)
+and run `ctest --test-dir build -R '^example-software-trigger$' --output-on-failure`.

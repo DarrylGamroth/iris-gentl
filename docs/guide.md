@@ -33,6 +33,13 @@ consumer and the CLI.
 
 ### Optional external simulators
 
+The in-tree tests exercise Iris's API and use deterministic images and faults.
+The external simulators exercise separate producer implementations and their
+runtime behavior. The triggered tests cover its copy path and its native ring's
+buffer-count, `TLParamsLocked`, and frame-ownership behavior. The continuous
+tests cover timed continuous acquisition, feature invalidation, and
+caller-owned buffer queues through the SDK3 runtime.
+
 For local triggered mock and continuous simulator qualification, configure these options.
 
 | CMake option | Input |
@@ -67,7 +74,7 @@ Camera commands use one CTI and require a unique device. Select by
 iris-gentl get --cti producer.cti Width Height PixelFormat
 iris-gentl get --cti producer.cti --set TriggerSelector=FrameStart TriggerSource
 iris-gentl xml --cti producer.cti > camera.xml
-iris-gentl grab 3 --cti producer.cti --timeout 1000 --output frames.raw
+iris-gentl acquire 3 --cti producer.cti --timeout 1000 --output frames.raw
 iris-gentl play 100 --cti producer.cti --timeout 1000 --json
 ```
 
@@ -85,7 +92,7 @@ iris-gentl play 100 --cti producer.cti --timeout 1000 --json
   each event. The host timestamp is monotonic time at dequeue in nanoseconds.
   The device timestamp uses the device's units and epoch. Set the camera's
   event configuration with `--set` when needed.
-- `grab [COUNT]` uses current camera settings and prints frame dimensions,
+- `acquire [COUNT]` uses current camera settings and prints frame dimensions,
   PFNC format, stride, and byte count. A new `--output` file contains the raw
   bytes of each complete image in order, including row padding. The command
   stops on a rejected image or timeout. Use `--stream-only` to leave remote
@@ -98,12 +105,14 @@ iris-gentl play 100 --cti producer.cti --timeout 1000 --json
   between complete frames. Intervals can include time spent waiting for
   rejected or missing frames. A completed run returns 0 even when it counts
   timeouts or rejected frames. It accepts the same acquisition settings as
-  `grab`.
+  `acquire`.
 
 Run `iris-gentl --help` for the complete option list.
+The [software-triggered capture example](../examples/README.md#software-triggered-capture-with-the-cli)
+uses the in-tree CTI and can run without a camera SDK.
 
 Use `--json` for newline-delimited JSON output from `info`, `features`,
-`describe`, `get`, `snapshot`, `diff`, `event`, `grab`, and `play`.
+`describe`, `get`, `snapshot`, `diff`, `event`, `acquire`, and `play`.
 Feature values in `get`, `snapshot`, and `event` use the GenApi text
 representation. Event timestamps are JSON integers. Use an integer-capable
 JSON parser to preserve all 64 bits.

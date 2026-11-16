@@ -21,8 +21,9 @@ grep -E '"selectors":\{"TriggerSelector":"FrameStart"\},"change":"removed"' "$tm
 IRIS_FAULT=events-snapshot "$cli" event 2 --cti "$cti" --json \
     | grep -E '"device_timestamp":9007199254740993.*"name":"EventCounter","type":"integer","value":"41"'
 
-IRIS_FAULT=progressive-complete "$cli" grab 2 --cti "$cti" --stream-only --buffers 1 \
-    --output "$tmp/frames.raw" | grep -F 'frame=2 width=2 height=4'
+IRIS_FAULT=progressive-trigger "$cli" acquire 2 --cti "$cti" --stream-only --buffers 1 \
+    --set TriggerSelector=FrameStart --set TriggerMode=Off --set TriggerSource=Software --set TriggerMode=On \
+    --trigger TriggerSoftware --output "$tmp/frames.raw" | grep -F 'frame=2 width=2 height=4'
 test "$(wc -c < "$tmp/frames.raw")" -eq 32
 
 IRIS_FAULT=progressive-complete "$cli" play 3 --cti "$cti" --stream-only --buffers 1 --json \
