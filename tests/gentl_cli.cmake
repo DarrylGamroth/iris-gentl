@@ -98,3 +98,27 @@ endif()
 
 set(ENV{IRIS_FAULT} progressive-incomplete)
 run_cli("^1$" "received a rejected image" grab --cti "${CTI}" --stream-only --buffers 1)
+
+run_cli("^0$" "complete=0 incomplete=3 unsupported_payload=0 invalid_image=0 timeouts=0.*interval_samples=0"
+    play 3 --cti "${CTI}" --stream-only --buffers 1)
+set(ENV{IRIS_FAULT} payload)
+run_cli("^0$" "unsupported_payload=2 invalid_image=0 timeouts=0"
+    play 2 --cti "${CTI}" --stream-only --buffers 1)
+set(ENV{IRIS_FAULT} invalid)
+run_cli("^0$" "unsupported_payload=0 invalid_image=2 timeouts=0"
+    play 2 --cti "${CTI}" --stream-only --buffers 1)
+set(ENV{IRIS_FAULT} timeout)
+run_cli("^0$" "\"timeouts\":2.*\"interval_samples\":0"
+    play 2 --cti "${CTI}" --stream-only --buffers 1 --timeout 5 --json)
+set(ENV{IRIS_FAULT} progressive-complete)
+run_cli("^0$" "\"complete\":3,\"incomplete\":0.*\"timeouts\":0.*\"interval_samples\":2.*\"mean_interval_ns\":"
+    play 3 --cti "${CTI}" --stream-only --buffers 1 --json)
+run_cli("^0$" "complete=100.*interval_samples=99 min_interval_ns=" play --cti "${CTI}" --stream-only --buffers 1)
+run_cli("^2$" "--output requires grab" play --cti "${CTI}" --output "${output_file}")
+
+set(ENV{IRIS_FAULT} events-snapshot)
+run_cli("^0$" "event=1234 bytes=12 host_timestamp_ns=[0-9]+ device_timestamp=0.*EventCounter=40"
+    event --cti "${CTI}")
+run_cli("^0$" "\"device_timestamp\":9007199254740993.*\"name\":\"EventCounter\",\"type\":\"integer\",\"value\":\"41\".*\"event\":\"112233445566778899\".*\"event\":\"abcd\".*\"features\":\\[\\]"
+    event 4 --cti "${CTI}" --json)
+run_cli("^1$" "receive event: Iris status" event 5 --cti "${CTI}" --json)

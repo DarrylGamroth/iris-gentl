@@ -3,6 +3,7 @@
 #include "gentl_features.hpp"
 #include "gentl_output.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <cinttypes>
@@ -34,8 +35,9 @@ constexpr char usage[] =
     "  xml              Write the active node-map XML to stdout\n"
     "  snapshot NAME ...  Save feature values with their current selector settings\n"
     "  diff BEFORE AFTER  Compare two snapshots\n"
-    "  event [COUNT]    Print GenTL events (default: 1)\n"
+    "  event [COUNT]    Print GenTL events and decoded features (default: 1)\n"
     "  grab [COUNT]     Receive complete images (default: 1)\n"
+    "  play [COUNT]     Summarize capture results and cadence (default: 100 attempts)\n"
     "\n"
     "  --cti PATH       CTI path or filename. Repeat for info. With no CTI,\n"
     "                   info scans GENICAM_GENTL64_PATH. Other commands require one.\n"
@@ -46,9 +48,9 @@ constexpr char usage[] =
     "  --stream INDEX   Zero-based data stream (default: 0)\n"
     "  --set NAME=VALUE Set a feature before running the command. Repeat in order.\n"
     "  --timeout MS     Time limit per completion or discovery update (default: 1000)\n"
-    "  --buffers N      Grab with N announced buffers\n"
-    "  --stream-only    Grab without issuing remote start and stop\n"
-    "  --trigger NAME   Execute a remote command before each grab\n"
+    "  --buffers N      Capture with N announced buffers\n"
+    "  --stream-only    Capture without issuing remote start and stop\n"
+    "  --trigger NAME   Execute a remote command before each frame wait\n"
     "  --output FILE    Save grabbed image bytes, including padding, in order\n"
     "  --json           Write one JSON object per result\n"
     "  -h, --help       Show help\n";
@@ -345,30 +347,142 @@ void export_xml(iris_node_map_t *map)
         throw std::runtime_error("could not write XML");
 }
 
+struct EventSnapshot {
+    iris_event_snapshot_t *value = nullptr;
+    ~EventSnapshot() { iris_event_snapshot_close(&value); }
+};
+
+void print_event(const iris_event_snapshot_t *snapshot, bool json)
+{
+    iris_event_snapshot_info_t info{};
+    check(iris_event_snapshot_info(snapshot, &info), "inspect event snapshot");
+    const bool host_time = info.valid & IRIS_EVENT_HAS_HOST_TIMESTAMP_NS;
+    const bool device_time = info.valid & IRIS_EVENT_HAS_DEVICE_TIMESTAMP;
+    Json object;
+    Json features(true);
+    if (json) {
+        object.string("event", info.event.id);
+        object.number("bytes", info.event.data_size);
+        if (host_time) object.number("host_timestamp_ns", info.host_timestamp_ns);
+        if (device_time) object.number("device_timestamp", info.device_timestamp);
+    } else {
+        std::printf("event=%s bytes=%zu", info.event.id, info.event.data_size);
+        if (host_time) std::printf(" host_timestamp_ns=%" PRIu64, info.host_timestamp_ns);
+        if (device_time) std::printf(" device_timestamp=%" PRIu64, info.device_timestamp);
+        std::putchar('\n');
+    }
+    const auto *list = iris_event_snapshot_features(snapshot);
+    for (size_t i = 0; i < iris_feature_list_count(list); ++i) {
+        iris_feature_entry_t entry{};
+        check(iris_feature_list_get(list, i, &entry), "inspect event feature");
+        size_t size = 0;
+        auto status = iris_event_snapshot_feature_to_string(snapshot, entry.name, nullptr, &size);
+        std::string value(size, '\0');
+        if (status == IRIS_OK)
+            status = iris_event_snapshot_feature_to_string(snapshot, entry.name, value.data(), &size);
+        if (json) {
+            Json feature;
+            feature.string("name", entry.name);
+            feature.string("type", feature_type(entry.info.type));
+            if (status == IRIS_OK) feature.string("value", value.c_str());
+            else feature.number("status", status);
+            features.item(feature.str());
+        } else if (status == IRIS_OK) {
+            std::printf("  %s=%s\n", entry.name, value.c_str());
+        } else {
+            std::printf("  %s: Iris status %" PRId32 "\n", entry.name, status);
+        }
+    }
+    if (json) {
+        object.raw("features", features.str());
+        object.print();
+    }
+}
+
 void receive_events(iris_node_map_t *map, uint64_t count, const Options &options)
 {
     check(iris_node_map_enable_events(map, 1), "subscribe to events");
     for (uint64_t i = 0; i < count; ++i) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(options.timeout);
-        iris_node_map_event_t event{};
-        auto status = iris_node_map_try_get_event(map, &event);
+        EventSnapshot event;
+        auto status = iris_node_map_try_get_event_snapshot(map, &event.value);
         while (status == IRIS_NO_EVENT && std::chrono::steady_clock::now() < deadline) {
             std::this_thread::sleep_for(1ms);
-            status = iris_node_map_try_get_event(map, &event);
+            status = iris_node_map_try_get_event_snapshot(map, &event.value);
         }
         if (status == IRIS_NO_EVENT) throw std::runtime_error("timed out waiting for a GenTL event");
         check(status, "receive event");
-        if (options.json) {
-            Json object;
-            object.string("event", event.id);
-            object.number("bytes", event.data_size);
-            object.print();
-        } else std::printf("event=%s bytes=%zu\n", event.id, event.data_size);
+        print_event(event.value, options.json);
     }
     check(iris_node_map_enable_events(map, 0), "unsubscribe from events");
 }
 
-void grab(Camera &camera, iris_node_map_t *map, const Options &options, uint64_t count)
+struct CaptureStats {
+    uint64_t complete = 0;
+    uint64_t incomplete = 0;
+    uint64_t unsupported = 0;
+    uint64_t invalid = 0;
+    uint64_t timeouts = 0;
+    uint64_t timestamp = 0;
+    uint64_t samples = 0;
+    uint64_t min_ns = 0;
+    uint64_t max_ns = 0;
+    long double total_ns = 0;
+
+    void record(const iris_frame_t &frame)
+    {
+        switch (frame.status) {
+        case IRIS_FRAME_COMPLETE: ++complete; break;
+        case IRIS_FRAME_INCOMPLETE: ++incomplete; return;
+        case IRIS_FRAME_UNSUPPORTED_PAYLOAD: ++unsupported; return;
+        case IRIS_FRAME_INVALID_IMAGE: ++invalid; return;
+        default: throw std::runtime_error("unknown frame status " + std::to_string(frame.status));
+        }
+        if (!(frame.valid & IRIS_FRAME_HAS_HOST_TIMESTAMP_NS)) {
+            timestamp = 0;
+            return;
+        }
+        if (timestamp && frame.host_timestamp_ns >= timestamp) {
+            const auto interval = frame.host_timestamp_ns - timestamp;
+            min_ns = samples ? std::min(min_ns, interval) : interval;
+            max_ns = std::max(max_ns, interval);
+            total_ns += interval;
+            ++samples;
+        }
+        timestamp = frame.host_timestamp_ns;
+    }
+
+    void print(int64_t elapsed_ns, bool json) const
+    {
+        if (json) {
+            Json object;
+            object.number("complete", complete);
+            object.number("incomplete", incomplete);
+            object.number("unsupported_payload", unsupported);
+            object.number("invalid_image", invalid);
+            object.number("timeouts", timeouts);
+            object.number("elapsed_ns", elapsed_ns);
+            object.number("interval_samples", samples);
+            if (samples) {
+                object.number("min_interval_ns", min_ns);
+                object.raw("mean_interval_ns", json_number(static_cast<double>(total_ns / samples)));
+                object.number("max_interval_ns", max_ns);
+            }
+            object.print();
+        } else {
+            std::printf("complete=%" PRIu64 " incomplete=%" PRIu64 " unsupported_payload=%" PRIu64
+                        " invalid_image=%" PRIu64 " timeouts=%" PRIu64 " elapsed_ns=%" PRId64
+                        " interval_samples=%" PRIu64, complete, incomplete, unsupported, invalid, timeouts,
+                        elapsed_ns, samples);
+            if (samples)
+                std::printf(" min_interval_ns=%" PRIu64 " mean_interval_ns=%.1Lf max_interval_ns=%" PRIu64,
+                            min_ns, total_ns / samples, max_ns);
+            std::putchar('\n');
+        }
+    }
+};
+
+void capture(Camera &camera, iris_node_map_t *map, const Options &options, uint64_t count, bool diagnostics)
 {
     check(iris_stream_open(camera.device, options.stream, &camera.stream), "open stream");
     const iris_start_options_t start{options.buffers, options.stream_only ? IRIS_ACQUISITION_STREAM_ONLY
@@ -382,12 +496,24 @@ void grab(Camera &camera, iris_node_map_t *map, const Options &options, uint64_t
         output.reset(std::fopen(options.output.c_str(), "wbx"));
         if (!output) throw std::runtime_error("cannot create output file: " + options.output);
     }
+    CaptureStats stats;
+    const auto started = std::chrono::steady_clock::now();
     for (uint64_t i = 0; i < count; ++i) {
         if (!options.trigger.empty())
             check(iris_feature_execute(map, options.trigger.c_str()), options.trigger.c_str());
         Frame frame{camera.stream};
-        check(iris_stream_wait_frame(camera.stream, options.timeout, &frame.info), "wait for frame");
+        const auto status = iris_stream_wait_frame(camera.stream, options.timeout, &frame.info);
+        if (diagnostics && status == IRIS_TIMEOUT) {
+            ++stats.timeouts;
+            continue;
+        }
+        check(status, "wait for frame");
         const auto &info = frame.info;
+        if (diagnostics) {
+            stats.record(info);
+            check(iris_stream_release_frame(camera.stream, &frame.info), "release frame");
+            continue;
+        }
         if (info.status != IRIS_FRAME_COMPLETE)
             throw std::runtime_error("received a rejected image (frame status " +
                                      std::to_string(info.status) + ")");
@@ -408,6 +534,10 @@ void grab(Camera &camera, iris_node_map_t *map, const Options &options, uint64_t
                         i + 1, info.width, info.height, info.pixel_format, info.stride_bytes, info.image_size);
         check(iris_stream_release_frame(camera.stream, &frame.info), "release frame");
     }
+    if (diagnostics) {
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+        stats.print(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count(), options.json);
+    }
     if (output && std::fclose(output.release()) != 0)
         throw std::runtime_error("could not close image output " + options.output);
 }
@@ -415,11 +545,12 @@ void grab(Camera &camera, iris_node_map_t *map, const Options &options, uint64_t
 bool run(std::string_view command, const Options &options)
 {
     const auto &args = options.args;
-    const bool grabbing = command == "grab";
+    const bool diagnostics = command == "play";
+    const bool capturing = command == "grab" || diagnostics;
     const bool events = command == "event";
     const bool info = command == "info";
     const bool set = command == "set";
-    if (command == "features" || grabbing || events) {
+    if (command == "features" || capturing || events) {
         if (args.size() > 1) throw std::invalid_argument("too many command arguments");
     } else if (command == "get" || command == "snapshot" || set) {
         if (args.empty()) throw std::invalid_argument("feature arguments are required");
@@ -438,25 +569,27 @@ bool run(std::string_view command, const Options &options)
     } else throw std::invalid_argument("unknown command: " + std::string(command));
     if (!info && options.producers.size() != 1)
         throw std::invalid_argument("this command requires exactly one --cti");
-    if (!grabbing && (options.buffers || options.stream_only || !options.output.empty() || !options.trigger.empty()))
-        throw std::invalid_argument("buffer, stream-only, output and trigger options require grab");
-    if ((info && !options.assignments.empty()) || (grabbing && options.module != "remote"))
+    if (!capturing && (options.buffers || options.stream_only || !options.trigger.empty()))
+        throw std::invalid_argument("buffer, stream-only and trigger options require grab or play");
+    if (command != "grab" && !options.output.empty())
+        throw std::invalid_argument("--output requires grab");
+    if ((info && !options.assignments.empty()) || (capturing && options.module != "remote"))
         throw std::invalid_argument("invalid command options; see --help");
     if (options.json && (command == "xml" || command == "exec" || set))
         throw std::invalid_argument("--json requires a command that prints results");
     validate_assignments(options.assignments);
     if (set) validate_assignments(args);
-    const auto count = (grabbing || events) && !args.empty()
-        ? number(args.front(), 1, UINT32_MAX, "count") : 1;
+    const auto count = (capturing || events) && !args.empty()
+        ? number(args.front(), 1, UINT32_MAX, "count") : (diagnostics ? 100 : 1);
 
     Camera camera;
     check(iris_context_create(&camera.context), "create context");
     if (info) return list_devices(camera, options) && camera.close();
 
-    const bool control = set || grabbing || events || command == "exec" || !options.assignments.empty();
+    const bool control = set || capturing || events || command == "exec" || !options.assignments.empty();
     open_device(camera, options, control ? IRIS_DEVICE_CONTROL : IRIS_DEVICE_READ_ONLY);
     iris_node_map_t *map = nullptr;
-    if (!grabbing || !options.assignments.empty() || !options.trigger.empty())
+    if (!capturing || !options.assignments.empty() || !options.trigger.empty())
         map = node_map(camera, options);
     write_features(map, options.assignments);
 
@@ -470,7 +603,7 @@ bool run(std::string_view command, const Options &options)
     else if (command == "exec") check(iris_feature_execute(map, args.front().c_str()), args.front().c_str());
     else if (command == "xml") export_xml(map);
     else if (events) receive_events(map, count, options);
-    else grab(camera, map, options, count);
+    else capture(camera, map, options, count, diagnostics);
     return camera.close();
 }
 } // namespace

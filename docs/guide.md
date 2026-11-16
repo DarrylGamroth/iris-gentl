@@ -33,7 +33,7 @@ Use a simulator runtime exposing serial `test-serial` and include the directory 
 ## Command-line tool
 
 `iris-gentl info` lists camera identities across the CTIs on
-`GENICAM_GENTL64_PATH`. Repeat `--cti` to query specific producers. The other
+`GENICAM_GENTL64_PATH`. Repeat `--cti` to query specific producers.
 commands use one CTI and require a unique device. Select by `--serial`, or
 use the `--interface` and `--device` IDs shown by `info`.
 
