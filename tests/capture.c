@@ -556,14 +556,16 @@ int main(int argc, char **argv)
     void *(*volatile allocate)(size_t) = malloc;
     void *probe = allocate(13);
     const allocation_counts calibration = allocation_end();
-    EXPECT(probe && calibration.other_calls == 1 && calibration.other_bytes == 13);
+    EXPECT(probe && (!IRIS_TEST_ALLOCATIONS ||
+                     (calibration.other_calls == 1 && calibration.other_bytes == 13)));
     free(probe);
     iris_context_t *context = NULL;
     EXPECT(iris_abi_major() == 1);
     allocation_begin();
     CHECK(iris_context_create(&context));
     const allocation_counts context_allocations = allocation_end();
-    EXPECT(context_allocations.consumer_calls > 0 && context_allocations.consumer_bytes > 0);
+    EXPECT(!IRIS_TEST_ALLOCATIONS ||
+           (context_allocations.consumer_calls > 0 && context_allocations.consumer_bytes > 0));
     if (strcmp(argv[1], "--list") == 0) {
         iris_device_list_t *list = NULL;
         CHECK(iris_discover(context, argv[2], 1000, &list));

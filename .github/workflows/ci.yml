@@ -33,6 +33,32 @@ jobs:
           cmake --build build --parallel
           ctest --test-dir build --output-on-failure --no-tests=error
 
+  sanitizers:
+    name: AddressSanitizer and UndefinedBehaviorSanitizer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CC: clang
+      CXX: clang++
+      ASAN_OPTIONS: detect_leaks=1
+      UBSAN_OPTIONS: print_stacktrace=1
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libarchive-dev libxml2-dev
+
+      - name: Build and test with sanitizers
+        run: |
+          sanitizer_build="$RUNNER_TEMP/iris-sanitizers"
+          cmake -S . -B "$sanitizer_build" -DCMAKE_BUILD_TYPE=Debug -DIRIS_SANITIZERS=ON
+          cmake --build "$sanitizer_build" --parallel
+          ctest --test-dir "$sanitizer_build" --output-on-failure --no-tests=error
+
   coverage:
     name: Mock CTI coverage
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository

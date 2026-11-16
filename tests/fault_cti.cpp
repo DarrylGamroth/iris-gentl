@@ -739,6 +739,7 @@ EXPORT(EventGetData)(EVENT_HANDLE event_handle, void *out, size_t *size, uint64_
     if (mode("io-event")) return error(GC_ERR_IO);
     if (mode("throw-event")) throw std::runtime_error("injected event exception");
     if (mode("abort")) return error(GC_ERR_ABORT);
+    if (mode("progressive") && timeout) return error(GC_ERR_INVALID_PARAMETER);
     if ((!queued && !mode("multipart-duplicate")) || mode("timeout")) {
         std::this_thread::sleep_for(std::chrono::milliseconds(timeout));
         return error(GC_ERR_TIMEOUT);
@@ -750,12 +751,11 @@ EXPORT(EventGetData)(EVENT_HANDLE event_handle, void *out, size_t *size, uint64_
         if (mode("progressive-paced") && std::chrono::steady_clock::now() < next_progressive_frame)
             return error(GC_ERR_TIMEOUT);
         ++progressive_poll;
-        const unsigned bytes = progressive_poll == 1 ? 6 : progressive_poll == 2 ? 12 : 16;
-        for (unsigned i = 0; i < bytes; ++i) pixels[i] = static_cast<unsigned char>(i + 1);
-        if (progressive_poll < 3 && !mode("progressive-complete"))
-            return error(GC_ERR_TIMEOUT);
-        if (mode("progressive-complete"))
-            for (unsigned i = 0; i < pixels.size(); ++i) pixels[i] = static_cast<unsigned char>(i + 1);
+        const unsigned bytes = mode("progressive-complete") || progressive_poll >= 3 ? 16 :
+                               progressive_poll == 1 ? 6 : 12;
+        auto *image = announced_memory ? static_cast<unsigned char *>(announced_memory) : pixels.data();
+        for (unsigned i = 0; i < bytes; ++i) image[i] = static_cast<unsigned char>(i + 1);
+        if (bytes < 16) return error(GC_ERR_TIMEOUT);
     }
     EVENT_NEW_BUFFER_DATA event{handle(mode("event") ? 99 : 6), nullptr};
     std::memcpy(out, &event, sizeof(event));

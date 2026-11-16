@@ -6,9 +6,33 @@ Iris GenTL is a Linux x86-64 C library for camera discovery, GenApi feature acce
 
 Follow the [build instructions](../README.md#build-and-test) to configure CMake. The default configure step downloads any missing EMVA dependencies. To use a custom SDK layout, set `GENAPI_INCLUDE_DIR` and `CMAKE_LIBRARY_PATH` to the GenApi headers and runtime library directories.
 
-### Simulator tests
+### Mock CTI tests and coverage
 
-The default CTest suite uses the mock CTI built by Iris. Configure these CMake options to add the triggered mock and continuous simulator tests.
+The default CTest suite builds `iris-test-cti.cti` from `tests/fault_cti.cpp`.
+The mixed-producer test loads two copies of this in-tree CTI, announces a
+caller-owned buffer to each, and verifies nonblocking capture while one
+stream restarts. The mock producer uses the GenTL header and needs no camera
+SDK. Iris still uses the EMVA GenApi runtime to load the mock's XML.
+
+GitHub Actions runs this suite in a normal build and with AddressSanitizer
+and UndefinedBehaviorSanitizer. Use `-DIRIS_SANITIZERS=ON` for a local
+sanitizer build. The normal build measures heap allocations because ASan
+supplies its own allocator interceptors.
+
+Keep gcov files outside the workspace by using a temporary build directory.
+
+```sh
+coverage_build=$(mktemp -d /tmp/iris-coverage.XXXXXX)
+cmake -S . -B "$coverage_build" -DIRIS_COVERAGE=ON
+cmake --build "$coverage_build" --target coverage --parallel
+```
+
+The coverage target requires at least 90% line coverage separately for the
+consumer and the CLI.
+
+### Optional external simulators
+
+For local triggered mock and continuous simulator qualification, configure these options.
 
 | CMake option | Input |
 | --- | --- |
@@ -19,21 +43,6 @@ The default CTest suite uses the mock CTI built by Iris. Configure these CMake o
 
 Use a simulator runtime exposing serial `test-serial` and include the directory
 containing `ldconfig` in `PATH`.
-
-For line coverage, configure both simulators with the options above and use a
-build directory outside the workspace. For example, set the four simulator
-paths in the shell and run:
-
-```sh
-coverage_build=$(mktemp -d /tmp/iris-coverage.XXXXXX)
-cmake -S . -B "$coverage_build" -DIRIS_COVERAGE=ON \
-  -DIRIS_triggered_CTI="$IRIS_triggered_CTI" -DIRIS_triggered_CLPROTOCOL="$IRIS_triggered_CLPROTOCOL" \
-  -DIRIS_continuous_CTI="$IRIS_continuous_CTI" -DIRIS_continuous_RUNTIME="$IRIS_continuous_RUNTIME"
-cmake --build "$coverage_build" --target coverage --parallel
-```
-
-The coverage target keeps gcov data in that build directory and requires at
-least 90% line coverage separately for the consumer and the CLI.
 
 ## Environment
 

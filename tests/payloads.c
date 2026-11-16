@@ -97,7 +97,8 @@ static void run(const char *path, const char *scenario)
     const iris_device_selector_t selector = {path, NULL, NULL, "test-serial"};
     allocation_begin();
     OK(iris_context_create(&context));
-    EXPECT(allocation_end().consumer_calls > 0);
+    const allocation_counts calibration = allocation_end();
+    EXPECT(!IRIS_TEST_ALLOCATIONS || calibration.consumer_calls > 0);
     OK(iris_device_open(context, &selector, IRIS_DEVICE_CONTROL, 0, &device));
     OK(iris_stream_open(device, 0, &stream));
     _Alignas(64) unsigned char memory[288] = {0};

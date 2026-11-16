@@ -2,6 +2,15 @@ cmake_minimum_required(VERSION 3.18)
 project(iris VERSION 0.2.2 DESCRIPTION "Iris GenTL" LANGUAGES C CXX)
 include(GNUInstallDirs)
 include(CTest)
+option(IRIS_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+if(IRIS_SANITIZERS)
+    add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    # C test executables load instrumented C++ libraries.
+    add_link_options(-fsanitize=address,undefined
+        $<$<LINK_LANG_AND_ID:C,Clang>:-fsanitize-link-c++-runtime>)
+    link_libraries($<$<LINK_LANG_AND_ID:C,Clang>:stdc++>)
+    add_compile_definitions(IRIS_TEST_SANITIZERS)
+endif()
 option(IRIS_BUNDLE_GENAPI "Install the official EMVA GenApi runtime with Iris" OFF)
 find_package(Threads REQUIRED)
 find_package(LibArchive REQUIRED)
@@ -122,6 +131,16 @@ if(BUILD_TESTING)
     target_include_directories(iris-test-cti PRIVATE ${GENTL_INCLUDE_DIR})
     target_link_libraries(iris-test-cti PRIVATE Threads::Threads)
     set_target_properties(iris-test-cti PROPERTIES PREFIX "" SUFFIX ".cti")
+    set(second_mock_cti "${CMAKE_CURRENT_BINARY_DIR}/iris-test-cti-second.cti")
+    add_custom_command(OUTPUT "${second_mock_cti}"
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:iris-test-cti> "${second_mock_cti}"
+        DEPENDS iris-test-cti VERBATIM)
+    add_custom_target(iris-second-mock-cti DEPENDS "${second_mock_cti}")
+    add_executable(iris-mixed-mock tests/mixed_mock.c tests/allocations.c)
+    target_link_libraries(iris-mixed-mock PRIVATE iris ${CMAKE_DL_LIBS})
+    add_dependencies(iris-mixed-mock iris-second-mock-cti)
+    add_test(NAME mixed-mock-producers COMMAND iris-mixed-mock $<TARGET_FILE:iris-test-cti> "${second_mock_cti}")
+    set_tests_properties(mixed-mock-producers PROPERTIES TIMEOUT 10)
     add_test(NAME example-features COMMAND "${CMAKE_COMMAND}"
         "-DFEATURES=$<TARGET_FILE:iris-example-features>" "-DCTI=$<TARGET_FILE:iris-test-cti>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/example_features.cmake")
@@ -185,7 +204,7 @@ if(BUILD_TESTING)
             COMMAND ${GCOVR} --root ${CMAKE_CURRENT_SOURCE_DIR}
                 --filter "${CMAKE_CURRENT_SOURCE_DIR}/tools/"
                 --fail-under-line 90 --print-summary ${CMAKE_BINARY_DIR}
-            DEPENDS iris-capture iris-gentl iris-failures iris-progressive iris-nodes iris-feature-browse iris-feature-batch iris-events iris-feature-values
+            DEPENDS iris-capture iris-mixed-mock iris-gentl iris-failures iris-progressive iris-nodes iris-feature-browse iris-feature-batch iris-events iris-feature-values
                     iris-nonblocking iris-test-cti iris-example-features iris-example-configure-and-acquire
                     iris-example-software-trigger iris-payloads iris-write-stack
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})

@@ -1,6 +1,8 @@
 #define _GNU_SOURCE
 #include "allocations.h"
 
+#if IRIS_TEST_ALLOCATIONS
+
 #include <dlfcn.h>
 #include <errno.h>
 #include <execinfo.h>
@@ -83,3 +85,9 @@ int posix_memalign(void **p, size_t a, size_t size)
     return 0;
 }
 void *valloc(size_t size) { COUNT(size); return __libc_memalign((size_t)sysconf(_SC_PAGESIZE), size); }
+#else
+// ASan supplies its own allocator interceptors and expects every pointer to use them.
+void allocation_begin(void) {}
+void allocation_pause_thread(int pause) { (void)pause; }
+allocation_counts allocation_end(void) { return (allocation_counts){0}; }
+#endif
