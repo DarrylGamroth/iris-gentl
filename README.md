@@ -3,7 +3,9 @@
 [![CI](https://github.com/DarrylGamroth/iris-gentl/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DarrylGamroth/iris-gentl/actions/workflows/ci.yml)
 [![Codecov](https://codecov.io/gh/DarrylGamroth/iris-gentl/branch/main/graph/badge.svg)](https://codecov.io/gh/DarrylGamroth/iris-gentl)
 
-Iris GenTL is a C library for discovering cameras, configuring GenApi features, and acquiring frames on Linux x86-64 with glibc. It can stream from multiple GenTL Producers (`.cti` files) in one process.
+Iris GenTL is a C library for discovering cameras, configuring GenApi features,
+and acquiring frames. It can stream from multiple GenTL Producers (`.cti`
+files) in one process.
 
 - Receive borrowed buffers through nonblocking polls or a finite wait. Normal capture after startup makes zero Iris heap allocations.
 - Supply caller-owned buffers and inspect image, chunk, multipart, and GenDC metadata.
@@ -34,7 +36,9 @@ extracted prefix.
 
 ## Build and test
 
-Use C and C++17 compilers, CMake 3.18 or newer, and the libxml2 and libarchive development packages (`libxml2-dev` and `libarchive-dev` on Debian and Ubuntu).
+Iris currently targets Linux x86-64 with glibc. Building from source requires
+C and C++17 compilers, CMake 3.18 or newer, and the libxml2 and libarchive
+development packages (`libxml2-dev` and `libarchive-dev` on Debian and Ubuntu).
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
