@@ -117,7 +117,7 @@ static void test_string(iris_node_map_t *map)
     iris_feature_info_t info;
     OK(iris_feature_info(map, "DeviceUserID", &info));
     EXPECT(info.type == IRIS_FEATURE_STRING && info.access == IRIS_FEATURE_READ_WRITE);
-    const char *values[] = {"sim-camera-01", "triggered", ""};
+    const char *values[] = {"sim-camera-01", "mock", ""};
     for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
         OK(iris_feature_set_string(map, "DeviceUserID", values[i]));
         size_t size = 0;

@@ -95,11 +95,11 @@ static int expect_no_frame(iris_stream_t *stream)
 
 int main(int argc, char **argv)
 {
-    const char *mock = getenv("trigger_fixture_GENTL_MOCK");
+    const char *mock = getenv("IRIS_TEST_SOFTWARE_TRIGGER");
     const char *fixture = getenv("IRIS_FAULT");
     const int in_tree = fixture && strcmp(fixture, "progressive-trigger") == 0;
     if (argc != 2 || (!in_tree && (!mock || strcmp(mock, "1") != 0))) {
-        fprintf(stderr, "Usage: IRIS_FAULT=progressive-trigger %s MOCK_CTI\n", argv[0]);
+        fprintf(stderr, "Usage: set IRIS_FAULT=progressive-trigger or IRIS_TEST_SOFTWARE_TRIGGER=1, then run %s MOCK_CTI\n", argv[0]);
         return EXIT_FAILURE;
     }
 

@@ -29,7 +29,7 @@ ctest --test-dir build --output-on-failure
 
 - GitHub CI uses the in-tree mock CTI. Use the
   [optional simulator settings](docs/guide.md#optional-external-simulators)
-  for local triggered mock and continuous simulator qualification. Keep simulator and
+  for local qualification with external test producers. Keep simulator and
   hardware results distinct.
 - Put coverage build directories outside the workspace to keep gcov files there.
   The CMake `coverage` target requires above 90% line coverage for both the consumer

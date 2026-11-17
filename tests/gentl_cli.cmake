@@ -10,7 +10,7 @@ endfunction()
 set(complete "complete=3 incomplete=0 unsupported_payload=0 invalid_image=0 timeouts=0.*interval_samples=2")
 if(SIMULATOR STREQUAL "continuous")
     run_cli("^0$" "${complete}" play 3 --cti "${CTI}"
-        --serial test-serial --timeout 2000 --set AcquisitionMode=Continuous)
+        --serial "${SERIAL}" --timeout 2000 --set AcquisitionMode=Continuous)
     return()
 elseif(SIMULATOR STREQUAL "triggered")
     run_cli("^0$" "${complete}" play 3 --cti "${CTI}" --stream-only --trigger TriggerSoftware

@@ -37,15 +37,15 @@ The fixture reports `TriggerSoftware pending` on the first completion query. For
 
 [configure_and_acquire.cpp](configure_and_acquire.cpp) opens a camera by serial number, checks `ExposureTime` type and access, reports its limits and units, writes the requested exposure, and reads it back. It sets and reads back `AcquisitionMode=Continuous`, starts the stream, then polls in batches of four. The callback sees the frame only while Iris lends it. The example stops and closes the stream, device, and context.
 
-Run it with continuous simulator using the CTI directory and SDK3 runtime from the [simulator settings](../docs/guide.md#optional-external-simulators).
+Pass the CTI path, the serial number, and the exposure in the unit reported
+by the device. Use an idle device that supports continuous acquisition.
 
 ```sh
-export GENICAM_GENTL64_PATH="/path/to/continuous/cti${GENICAM_GENTL64_PATH:+:$GENICAM_GENTL64_PATH}"
-export LD_LIBRARY_PATH="/path/to/continuous/runtime${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-build/examples/iris-example-configure-and-acquire continuousSDK3GenTL.cti test-serial 2000
+build/examples/iris-example-configure-and-acquire /path/to/producer.cti device-serial 2000
 ```
 
-The last argument uses the camera's exposure unit, which is microseconds on this simulator. Use an idle device that can acquire continuously. The program exits with an error if it cannot obtain eight complete frames within five seconds.
+The program exits with an error if it cannot obtain eight complete frames
+within five seconds.
 
 ## Software-triggered capture with the CLI
 
@@ -81,7 +81,5 @@ IRIS_FAULT=progressive-trigger \
 ctest --test-dir build -R '^example-mock-software-trigger$' --output-on-failure
 ```
 
-The C example also runs with the triggered mock copy path and its test CLProtocol
-library. Configure `IRIS_triggered_CTI` and `IRIS_triggered_CLPROTOCOL` as described in
-the [optional simulator settings](../docs/guide.md#optional-external-simulators)
-and run `ctest --test-dir build -R '^example-software-trigger$' --output-on-failure`.
+Set `IRIS_TRIGGER_CTI` to run the example with an external test producer.
+See the [optional simulator settings](../docs/guide.md#optional-external-simulators).

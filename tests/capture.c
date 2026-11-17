@@ -178,7 +178,8 @@ static void test_features(camera_t *a, camera_t *b)
     CHECK(iris_device_node_map(b->device, IRIS_DEVICE_MODULE, &map));
     size = sizeof(text);
     CHECK(iris_feature_get_string(b->remote, "DeviceSerialNumber", text, &size));
-    EXPECT(strcmp(text, "test-serial") == 0);
+    const char *expected_serial = getenv("IRIS_TEST_CONTINUOUS_SERIAL");
+    EXPECT(text[0] && (!expected_serial || strcmp(text, expected_serial) == 0));
     EXPECT(iris_feature_set_string(b->remote, "DeviceSerialNumber", "ignored") < 0);
     uint32_t flag;
     CHECK(iris_feature_get_boolean(b->remote, "AcquisitionStatus", &flag));
@@ -320,7 +321,7 @@ static double monotonic(void)
     return t.tv_sec + t.tv_nsec * 1e-9;
 }
 
-static size_t poll_simulator(camera_t *camera)
+static size_t poll_continuous(camera_t *camera)
 {
     size_t delivered;
     CHECK(iris_stream_poll(camera->stream, consume, camera, 2, &delivered));
@@ -334,7 +335,7 @@ static void native_no_frame(camera_t *triggered, camera_t *continuous)
     do {
         iris_frame_t frame = {0};
         EXPECT(iris_stream_try_get_frame(triggered->stream, &frame) == IRIS_NO_FRAME);
-        poll_simulator(continuous);
+        poll_continuous(continuous);
     } while (monotonic() < deadline);
 }
 
@@ -346,7 +347,7 @@ static iris_frame_t native_trigger(camera_t *triggered, camera_t *continuous, un
     const double deadline = monotonic() + 1;
     iris_frame_t frame = {0};
     for (;;) {
-        poll_simulator(continuous);
+        poll_continuous(continuous);
         const iris_status_t status = iris_stream_try_get_frame(triggered->stream, &frame);
         if (status == IRIS_OK) break;
         EXPECT(status == IRIS_NO_FRAME && monotonic() < deadline);
@@ -422,7 +423,7 @@ static void test_native_ring(camera_t *triggered, camera_t *continuous)
         EXPECT(iris_stream_start(triggered->stream, &options) == IRIS_BUSY);
         allocation_begin();
         const double deadline = monotonic() + 1;
-        while (!poll_simulator(continuous)) EXPECT(monotonic() < deadline);
+        while (!poll_continuous(continuous)) EXPECT(monotonic() < deadline);
         stale = frames[0];
         for (unsigned i = 0; i < depth; ++i) {
             EXPECT(((const unsigned char *)frames[i].data)[0] == (i ? i : depth));
@@ -589,14 +590,14 @@ int main(int argc, char **argv)
         EXPECT(!mixed || argc == (cycling ? 5 : 4));
         open_camera(context, argv[2], !mixed && argc == 4 ? argv[3] : NULL, NULL, &a);
         if (native_ring) {
-            open_camera(context, argv[3], "test-serial", NULL, &b);
+            open_camera(context, argv[3], getenv("IRIS_TEST_CONTINUOUS_SERIAL"), NULL, &b);
             test_native_ring(&a, &b);
         } else if (xml_override) {
-            open_camera(context, argv[3], "test-serial", NULL, &b);
+            open_camera(context, argv[3], getenv("IRIS_TEST_CONTINUOUS_SERIAL"), NULL, &b);
             capture_with_xml_override(context, argv[2], &a, &b);
         } else if (simulated) {
             iris_buffer_t a_buffers[CALLER_BUFFER_COUNT], b_buffers[CALLER_BUFFER_COUNT];
-            open_camera(context, argv[3], "test-serial", NULL, &b);
+            open_camera(context, argv[3], getenv("IRIS_TEST_CONTINUOUS_SERIAL"), NULL, &b);
             test_features(&a, &b);
             if (!caller_buffers) {
                 start_mock(&a);
@@ -648,7 +649,7 @@ int main(int argc, char **argv)
                     a.last_host = 0;
                     if (cycle < cycles) CHECK(iris_stream_start(a.stream, NULL));
                 }
-                printf("rejected capture producer completions: %u\n", a.rejected);
+                printf("rejected stream completions: %u\n", a.rejected);
                 close_camera(&b);
                 close_camera(&a);
                 CHECK(iris_context_close(&context));

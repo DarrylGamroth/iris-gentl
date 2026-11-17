@@ -39,24 +39,18 @@ consumer and the CLI.
 
 ### Optional external simulators
 
-The in-tree tests exercise Iris's API and use deterministic images and faults.
-The external simulators exercise separate producer implementations and their
-runtime behavior. The triggered tests cover its copy path and its native ring's
-buffer-count, `TLParamsLocked`, and frame-ownership behavior. The continuous
-tests cover timed continuous acquisition, feature invalidation, and
-caller-owned buffer queues through the SDK3 runtime.
-
-For local triggered mock and continuous simulator qualification, configure these options.
+For local integration tests with external GenTL producers, supply CTI paths
+and any producer-specific environment as semicolon-separated `NAME=VALUE`
+entries. The in-tree mock remains the default test suite.
 
 | CMake option | Input |
 | --- | --- |
-| `IRIS_triggered_CTI` | Mock-capable triggered GenTL producer file. |
-| `IRIS_triggered_CLPROTOCOL` | Matching synthetic triggered CLProtocol library file. |
-| `IRIS_continuous_CTI` | continuous SDK3 GenTL producer file with simulator support. |
-| `IRIS_continuous_RUNTIME` | Matching continuous SDK3 runtime directory. |
-
-Use a simulator runtime exposing serial `test-serial` and include the directory
-containing `ldconfig` in `PATH`.
+| `IRIS_TRIGGER_CTI` | Producer that supports stream-only acquisition and `TriggerSoftware`. |
+| `IRIS_TRIGGER_ENVIRONMENT` | Environment entries for the triggered producer. |
+| `IRIS_CONTINUOUS_CTI` | Producer that supports continuous acquisition, `ExposureTime`, and feature invalidation. |
+| `IRIS_CONTINUOUS_SERIAL` | Serial number to select for the continuous stream. |
+| `IRIS_CONTINUOUS_ENVIRONMENT` | Environment entries for the continuous producer. |
+| `IRIS_NATIVE_RING_ENVIRONMENT` | Optional settings to enable native-ring coverage with both producers. |
 
 ## Environment
 
@@ -177,11 +171,11 @@ Use `iris_node_map_xml` to copy the loaded description, including the XML member
 - Pass enumeration symbols such as `Continuous` exactly as the camera reports them. Entry queries include unavailable entries and report access for each one. Use the entry symbol to select a value.
 - Use the GenApi text conversion functions for textual configuration. Use the String functions for direct String access. Commands use `iris_feature_execute` and optionally `iris_feature_command_done`.
 - For variable-length text or numeric arrays, pass NULL and a zero size to query capacity. Allocate or select storage, then call again with its capacity. Text sizes include the terminating NUL. Array sizes count elements. On `IRIS_BUFFER_TOO_SMALL`, resize using the reported requirement and retry. The required capacity may change with the feature or selector.
-- Producers that support `EVENT_FEATURE_INVALIDATE` can notify Iris of remote feature changes. Enable the subscription on the remote node map and call `iris_node_map_poll_invalidation` to apply queued events. Iris tries the standard local device handle first and can fall back to the remote port for producers such as the tested continuous CTI. A known feature name invalidates that map's cache so backing registers refresh in every selector state. This poll can allocate and uses the feature lock.
+- Producers that support `EVENT_FEATURE_INVALIDATE` can notify Iris of remote feature changes. Enable the subscription on the remote node map and call `iris_node_map_poll_invalidation` to apply queued events. Iris tries the standard local device handle first and can fall back to the remote port when required by the producer. A known feature name invalidates that map's cache so backing registers refresh in every selector state. This poll can allocate and uses the feature lock.
 
 After an out-of-band change, call `iris_feature_invalidate` with the changed node's name to invalidate it and its GenApi dependents. Use `iris_node_map_invalidate` if the affected nodes are unknown. Later queries refresh invalidated cache entries as needed. Both calls work without an event subscription. [GenApi caching](https://www.emva.org/wp-content/uploads/GenICam_Standard_v2_1_1.pdf)
 
-Use `iris_feature_write_batch` when several feature writes on one node map must run in order without interleaving with other Iris feature calls. List the selector write before its dependent writes. The batch stops on the first error and reports how many writes succeeded. Earlier writes and selector changes remain in effect. A failing write can itself affect the device. The [triggered software-trigger example](../examples/README.md#software-triggered-capture-in-c) shows how to apply a batch and verify the final settings.
+Use `iris_feature_write_batch` when several feature writes on one node map must run in order without interleaving with other Iris feature calls. List the selector write before its dependent writes. The batch stops on the first error and reports how many writes succeeded. Earlier writes and selector changes remain in effect. A failing write can itself affect the device. The [software-trigger example](../examples/README.md#software-triggered-capture-in-c) shows how to apply a batch and verify the final settings.
 
 To use the producer's native GenTL port stack, call `iris_node_map_start_stacking`, stage named GenApi text values with `iris_node_map_stack_add`, then call `iris_node_map_write_stack`. Call `iris_node_map_cancel_stack` to discard pending writes. Each node map has its own stack. Iris preserves entry order, including repeated writes to a selector, and applies the stack under the feature lock. Ordinary feature setters still take effect immediately.
 
@@ -203,19 +197,19 @@ Use `iris_node_map_try_get_event_snapshot` when you need to keep an event or pas
 
 Configure geometry, format, and triggering before `iris_stream_start`. With NULL start options, Iris allocates and queues the pool and manages both the host stream and remote acquisition. Use `IRIS_ACQUISITION_STREAM_ONLY` when the application manages the remote commands or a simulator has a separate trigger. Use a zero buffer count for the default, which respects the producer minimum.
 
-Some producers require a fixed pool size. For the triggered native ring, set `trigger_fixture_ZERO_COPY=1` and use the ring depth reported by `iris_stream_buffer_requirements` as the explicit buffer count. Leave `buffers` NULL so the producer can announce its native slots. Iris sets `TLParamsLocked` before announcing the pool and clears its lock after revoking the buffers. Release outstanding frames and finish cleanup before changing the next acquisition's geometry.
+Some producers require a fixed pool size. For a producer-owned native ring, use the ring depth reported by `iris_stream_buffer_requirements` as the explicit buffer count. Leave `buffers` NULL so the producer can announce its native slots. Iris sets `TLParamsLocked` before announcing the pool and clears its lock after revoking the buffers. Release outstanding frames and finish cleanup before changing the next acquisition's geometry.
 
 ### Caller-owned host buffers
 
 After configuration, call `iris_stream_buffer_requirements` and prepare at least the reported minimum number of writable, aligned host buffers. Give each `iris_buffer_t` its address, capacity, and an optional application pointer. Set `iris_start_options_t.buffers` to the array and `buffer_count` to the exact array length. Iris announces the supplied memory directly and returns the corresponding pointer in `frame.user_data`. Each buffer range must be reserved for that stream and must remain valid until revocation. The descriptor array itself is only needed during start.
 
-After a successful start or a failed start, release any borrowed frames and call `iris_stream_stop` successfully before freeing the storage. Retry stop if cleanup fails. If you stop while holding a frame, release it and stop again, or close the stream successfully, before freeing the storage. A producer can reject application memory or require reopening the stream before changing allocation mode. triggered mock and continuous simulator accept caller memory on their tested host capture paths.
+After a successful start or a failed start, release any borrowed frames and call `iris_stream_stop` successfully before freeing the storage. Retry stop if cleanup fails. If you stop while holding a frame, release it and stop again, or close the stream successfully, before freeing the storage. A producer can reject application memory or require reopening the stream before changing allocation mode.
 
 Space caller buffers on separate cache lines so another thread or the producer can touch a queued buffer while you read a borrowed one. On Linux x86-64, align each base to 64 bytes and the producer's required alignment. If carving buffers out of an arena, round the stride up to meet both alignments. Standalone buffers allocated by Iris as a fallback are cache-line aligned. Producers control the alignment of any buffers they allocate.
 
 Iris accepts CPU-accessible host addresses through standard GenTL announcement. Direct DMA-BUF file descriptor import and device-only GPU buffers require producer extensions. If a producer accepts a CPU mapping through standard announcement, the application still owns the mapping and any required synchronization.
 
-See the [triggered mock example](../examples/README.md#software-triggered-capture-in-c) for configuring software triggering, executing `TriggerSoftware` after stream start, and receiving and releasing one frame.
+See the [software-triggered mock example](../examples/README.md#software-triggered-capture-in-c) for configuring software triggering, executing `TriggerSoftware` after stream start, and receiving and releasing one frame.
 
 | Receive API | Ownership and scheduling |
 | --- | --- |

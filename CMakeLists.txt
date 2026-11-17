@@ -73,55 +73,50 @@ if(IRIS_BUNDLE_GENAPI)
 endif()
 add_subdirectory(examples)
 if(BUILD_TESTING)
-    set(IRIS_triggered_CTI "" CACHE FILEPATH "triggered mock producer")
-    set(IRIS_triggered_CLPROTOCOL "" CACHE FILEPATH "triggered mock CLProtocol")
-    set(IRIS_continuous_CTI "" CACHE FILEPATH "continuous simulator producer")
-    set(IRIS_continuous_RUNTIME "" CACHE PATH "continuous SDK3 runtime directory")
-    if(IRIS_continuous_CTI)
-        get_filename_component(continuous_dir "${IRIS_continuous_CTI}" DIRECTORY)
-        get_filename_component(continuous_cti "${IRIS_continuous_CTI}" NAME)
+    set(IRIS_TRIGGER_CTI "" CACHE FILEPATH "External software-triggered test producer")
+    set(IRIS_TRIGGER_ENVIRONMENT "" CACHE STRING "Environment entries for the triggered producer")
+    set(IRIS_CONTINUOUS_CTI "" CACHE FILEPATH "External continuous-acquisition test producer")
+    set(IRIS_CONTINUOUS_SERIAL "" CACHE STRING "Serial number for the continuous test producer")
+    set(IRIS_CONTINUOUS_ENVIRONMENT "" CACHE STRING "Environment entries for the continuous producer")
+    set(IRIS_NATIVE_RING_ENVIRONMENT "" CACHE STRING "Additional environment entries for native-ring testing")
+    if(IRIS_CONTINUOUS_CTI AND IRIS_CONTINUOUS_SERIAL)
         add_test(NAME example-configure-and-acquire
-            COMMAND iris-example-configure-and-acquire "${continuous_cti}" test-serial 2000)
-        set_tests_properties(example-configure-and-acquire PROPERTIES TIMEOUT 15
-            RESOURCE_LOCK continuous-simulator ENVIRONMENT
-            "GENICAM_GENTL64_PATH=${continuous_dir};LD_LIBRARY_PATH=${IRIS_continuous_RUNTIME}:$ENV{LD_LIBRARY_PATH}")
+            COMMAND iris-example-configure-and-acquire "${IRIS_CONTINUOUS_CTI}" "${IRIS_CONTINUOUS_SERIAL}" 2000)
         add_test(NAME gentl-cli-continuous-play COMMAND "${CMAKE_COMMAND}"
-            "-DCLI=$<TARGET_FILE:iris-gentl>" "-DCTI=${continuous_cti}" -DSIMULATOR=continuous
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/gentl_cli.cmake")
-        set_tests_properties(gentl-cli-continuous-play PROPERTIES TIMEOUT 15
-            RESOURCE_LOCK continuous-simulator ENVIRONMENT
-            "GENICAM_GENTL64_PATH=${continuous_dir};LD_LIBRARY_PATH=${IRIS_continuous_RUNTIME}:$ENV{LD_LIBRARY_PATH}")
+            "-DCLI=$<TARGET_FILE:iris-gentl>" "-DCTI=${IRIS_CONTINUOUS_CTI}" -DSIMULATOR=continuous
+            "-DSERIAL=${IRIS_CONTINUOUS_SERIAL}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/gentl_cli.cmake")
+        set_tests_properties(example-configure-and-acquire gentl-cli-continuous-play PROPERTIES TIMEOUT 15
+            RESOURCE_LOCK external-continuous-producer ENVIRONMENT "${IRIS_CONTINUOUS_ENVIRONMENT}")
     endif()
-    if(IRIS_triggered_CTI AND IRIS_triggered_CLPROTOCOL)
-        get_filename_component(triggered_dir "${IRIS_triggered_CTI}" DIRECTORY)
-        get_filename_component(triggered_cti "${IRIS_triggered_CTI}" NAME)
-        set(triggered_mock_environment "trigger_fixture_GENTL_MOCK=1;trigger_fixture_CLPROTOCOL=${IRIS_triggered_CLPROTOCOL}")
-        add_test(NAME example-software-trigger COMMAND iris-example-software-trigger "${triggered_cti}")
-        set_tests_properties(example-software-trigger PROPERTIES TIMEOUT 10
-            ENVIRONMENT "${triggered_mock_environment};GENICAM_GENTL64_PATH=${triggered_dir};trigger_fixture_ZERO_COPY=0")
-        add_test(NAME gentl-cli-software-trigger COMMAND iris-gentl acquire 2 --cti "${triggered_cti}"
+    if(IRIS_TRIGGER_CTI)
+        add_test(NAME example-software-trigger COMMAND iris-example-software-trigger "${IRIS_TRIGGER_CTI}")
+        add_test(NAME gentl-cli-software-trigger COMMAND iris-gentl acquire 2 --cti "${IRIS_TRIGGER_CTI}"
             --stream-only --trigger TriggerSoftware --set TriggerSelector=FrameStart
             --set TriggerMode=Off --set TriggerSource=Software --set TriggerMode=On)
-        set_tests_properties(gentl-cli-software-trigger PROPERTIES TIMEOUT 10
-            PASS_REGULAR_EXPRESSION "frame=2 width="
-            ENVIRONMENT "${triggered_mock_environment};GENICAM_GENTL64_PATH=${triggered_dir};trigger_fixture_ZERO_COPY=0")
-        add_test(NAME gentl-cli-triggered-play COMMAND "${CMAKE_COMMAND}"
-            "-DCLI=$<TARGET_FILE:iris-gentl>" "-DCTI=${triggered_cti}" -DSIMULATOR=triggered
+        add_test(NAME gentl-cli-trigger-play COMMAND "${CMAKE_COMMAND}"
+            "-DCLI=$<TARGET_FILE:iris-gentl>" "-DCTI=${IRIS_TRIGGER_CTI}" -DSIMULATOR=triggered
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/gentl_cli.cmake")
-        set_tests_properties(gentl-cli-triggered-play PROPERTIES TIMEOUT 10
-            ENVIRONMENT "${triggered_mock_environment};GENICAM_GENTL64_PATH=${triggered_dir};trigger_fixture_ZERO_COPY=0")
+        set_tests_properties(example-software-trigger gentl-cli-software-trigger gentl-cli-trigger-play
+            PROPERTIES TIMEOUT 10 RESOURCE_LOCK external-triggered-producer ENVIRONMENT "${IRIS_TRIGGER_ENVIRONMENT}")
+        set_property(TEST example-software-trigger APPEND PROPERTY ENVIRONMENT "IRIS_TEST_SOFTWARE_TRIGGER=1")
+        set_tests_properties(gentl-cli-software-trigger PROPERTIES PASS_REGULAR_EXPRESSION "frame=2 width=")
     endif()
-    if(IRIS_triggered_CTI AND IRIS_triggered_CLPROTOCOL AND IRIS_continuous_CTI)
-        add_test(NAME mixed-simulators COMMAND iris-capture --test "${triggered_cti}" "${continuous_cti}")
-        add_test(NAME mixed-caller-buffers COMMAND iris-capture --test-caller-buffers "${triggered_cti}" "${continuous_cti}")
-        add_test(NAME mixed-remote-xml-override COMMAND iris-capture --test-xml-override "${triggered_cti}" "${continuous_cti}")
-        add_test(NAME mixed-triggered-native-ring COMMAND iris-capture --test-native-ring "${triggered_cti}" "${continuous_cti}")
+    if(IRIS_TRIGGER_CTI AND IRIS_CONTINUOUS_CTI AND IRIS_CONTINUOUS_SERIAL)
+        set(external_producers "${IRIS_TRIGGER_CTI}" "${IRIS_CONTINUOUS_CTI}")
+        set(external_environment ${IRIS_TRIGGER_ENVIRONMENT} ${IRIS_CONTINUOUS_ENVIRONMENT}
+            "IRIS_TEST_CONTINUOUS_SERIAL=${IRIS_CONTINUOUS_SERIAL}")
+        add_test(NAME mixed-simulators COMMAND iris-capture --test ${external_producers})
+        add_test(NAME mixed-caller-buffers COMMAND iris-capture --test-caller-buffers ${external_producers})
+        add_test(NAME mixed-remote-xml-override COMMAND iris-capture --test-xml-override ${external_producers})
         set_tests_properties(mixed-simulators mixed-caller-buffers mixed-remote-xml-override PROPERTIES TIMEOUT 30
-            RESOURCE_LOCK continuous-simulator ENVIRONMENT
-            "${triggered_mock_environment};GENICAM_GENTL64_PATH=${triggered_dir}:${continuous_dir};LD_LIBRARY_PATH=${IRIS_continuous_RUNTIME}:$ENV{LD_LIBRARY_PATH}")
-        set_tests_properties(mixed-triggered-native-ring PROPERTIES TIMEOUT 30
-            RESOURCE_LOCK continuous-simulator ENVIRONMENT
-            "${triggered_mock_environment};GENICAM_GENTL64_PATH=${triggered_dir}:${continuous_dir};LD_LIBRARY_PATH=${IRIS_continuous_RUNTIME}:$ENV{LD_LIBRARY_PATH};trigger_fixture_ZERO_COPY=1;trigger_fixture_RING_BUFFERS=4")
+            RESOURCE_LOCK "external-triggered-producer;external-continuous-producer"
+            ENVIRONMENT "${external_environment}")
+        if(IRIS_NATIVE_RING_ENVIRONMENT)
+            add_test(NAME mixed-native-ring COMMAND iris-capture --test-native-ring ${external_producers})
+            set_tests_properties(mixed-native-ring PROPERTIES TIMEOUT 30
+                RESOURCE_LOCK "external-triggered-producer;external-continuous-producer"
+                ENVIRONMENT "${external_environment};${IRIS_NATIVE_RING_ENVIRONMENT}")
+        endif()
     endif()
 endif()
 
