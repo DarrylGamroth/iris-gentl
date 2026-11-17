@@ -211,15 +211,15 @@ if(BUILD_TESTING)
         target_link_options(iris-feature-values PRIVATE --coverage)
         find_program(GCOVR gcovr REQUIRED)
         add_custom_target(coverage
-            COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+            COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --no-tests=error
             COMMAND ${GCOVR} --root ${CMAKE_CURRENT_SOURCE_DIR}
                 --filter "${CMAKE_CURRENT_SOURCE_DIR}/src/"
                 --filter "${CMAKE_CURRENT_SOURCE_DIR}/inc/internal/"
-                --fail-under-line 90 --print-summary
+                --fail-under-line 90.01 --print-summary
                 ${CMAKE_BINARY_DIR}
             COMMAND ${GCOVR} --root ${CMAKE_CURRENT_SOURCE_DIR}
                 --filter "${CMAKE_CURRENT_SOURCE_DIR}/tools/"
-                --fail-under-line 90 --print-summary ${CMAKE_BINARY_DIR}
+                --fail-under-line 90.01 --print-summary ${CMAKE_BINARY_DIR}
             DEPENDS iris-capture iris-mixed-mock iris-mock-buffer-pool iris-gentl iris-failures iris-progressive iris-nodes iris-feature-browse iris-feature-batch iris-events iris-feature-values
                     iris-nonblocking iris-test-cti iris-example-features iris-example-configure-and-acquire
                     iris-example-software-trigger iris-payloads iris-write-stack

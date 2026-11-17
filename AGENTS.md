@@ -32,7 +32,7 @@ ctest --test-dir build --output-on-failure
   for local triggered mock and continuous simulator qualification. Keep simulator and
   hardware results distinct.
 - Put coverage build directories outside the workspace to keep gcov files there.
-  The CMake `coverage` target enforces 90% line coverage for both the consumer
+  The CMake `coverage` target requires above 90% line coverage for both the consumer
   and CLI. The public API reference can be checked with `doxygen docs/Doxyfile`.
 - CMake downloads the public EMVA dependencies and checks their hashes. Keep
   EMVA runtime binaries unmodified in release packages and include their

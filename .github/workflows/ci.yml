@@ -87,7 +87,7 @@ jobs:
           coverage_build="$RUNNER_TEMP/iris-coverage"
           cmake -S . -B "$coverage_build" -DBUILD_TESTING=ON -DIRIS_COVERAGE=ON
           cmake --build "$coverage_build" --parallel
-          ctest --test-dir "$coverage_build" --output-on-failure --no-tests=error
+          cmake --build "$coverage_build" --target coverage
           # Publish line coverage to match the local coverage gates.
           gcovr --root "$GITHUB_WORKSPACE" --filter '^src/' --filter '^inc/internal/' --filter '^tools/' \
             --exclude-branches-by-pattern '.*' --cobertura "$RUNNER_TEMP/iris-coverage.xml" --print-summary "$coverage_build"
