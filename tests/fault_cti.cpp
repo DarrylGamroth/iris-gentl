@@ -29,6 +29,8 @@ struct BufferPool {
     size_t head = 0;
     size_t minimum = 1;
     size_t expected = 0;
+    unsigned char pattern = 0;
+    bool vary_pixels = false;
 };
 BufferPool pool;
 std::mutex pool_queue_mutex;
@@ -415,6 +417,7 @@ EXPORT(GCInitLib)()
     const char *value = std::getenv("IRIS_FAULT");
     std::strncpy(scenario, value ? value : "", sizeof(scenario) - 1);
     pool = {};
+    pool.vary_pixels = std::getenv("IRIS_MOCK_VARY_PIXELS") != nullptr;
     if (mode("progressive-pool") &&
         (!read_buffer_count("IRIS_MOCK_MIN_BUFFERS", pool.minimum) ||
          !read_buffer_count("IRIS_MOCK_EXPECT_BUFFERS", pool.expected)))
@@ -908,7 +911,9 @@ EXPORT(EventGetData)(EVENT_HANDLE event_handle, void *out, size_t *size, uint64_
         --pool.queued;
         buffer->queued = false;
         auto *image = static_cast<unsigned char *>(buffer->data);
-        for (size_t i = 0; i < pixels.size(); ++i) image[i] = static_cast<unsigned char>(i + 1);
+        if (pool.vary_pixels) ++pool.pattern;
+        for (size_t i = 0; i < pixels.size(); ++i)
+            image[i] = static_cast<unsigned char>(i + 1 + pool.pattern);
         const EVENT_NEW_BUFFER_DATA event{buffer, buffer->user};
         std::memcpy(out, &event, sizeof(event));
         *size = sizeof(event);
