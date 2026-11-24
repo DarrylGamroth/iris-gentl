@@ -23,11 +23,18 @@ using TextReader = iris_status_t (*)(iris_node_map_t *, const char *, char *, si
 
 std::string read_text(iris_node_map_t *map, const char *name, TextReader read)
 {
-    size_t size = 0;
-    check(read(map, name, nullptr, &size), name);
-    std::vector<char> value(size);
-    check(read(map, name, value.data(), &size), name);
-    return std::string(value.data(), size - 1);
+    // A live feature can change between reads, including its text length.
+    std::vector<char> value(128);
+    for (;;) {
+        size_t size = value.size();
+        const auto status = read(map, name, value.data(), &size);
+        if (status == IRIS_BUFFER_TOO_SMALL && size > value.size()) {
+            value.resize(size);
+            continue;
+        }
+        check(status, name);
+        return std::string(value.data(), size - 1);
+    }
 }
 
 std::vector<std::string> related(iris_node_map_t *map, const char *name, iris_feature_relation_t relation)
