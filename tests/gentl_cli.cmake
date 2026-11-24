@@ -42,7 +42,11 @@ run_cli("^0$" "\"values\":\\[16,32,64\\]" describe --cti "${CTI}"
     --interface test-interface --device test-device WidthRaw --json)
 run_cli("^0$" "Values:\n  1\n  2\n  4" describe --cti "${CTI}"
     --interface test-interface --device test-device WidthScaled)
+set(ENV{IRIS_FAULT} changing-text)
+run_cli("^0$" "^DeviceUserID=short\n$" get --cti "${CTI}" DeviceUserID)
 set(ENV{IRIS_FAULT} example)
+string(REPEAT "x" 159 long_label)
+run_cli("^0$" "^LongDeviceLabel=${long_label}\n$" get --cti "${CTI}" LongDeviceLabel)
 run_cli("^0$" "\"increment\":16" describe --cti "${CTI}" Width --json)
 run_cli("^0$" "\"choices\".*\"selectors\":\\[\"TriggerSelector\"\\]"
     describe --cti "${CTI}" TriggerMode --json)

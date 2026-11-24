@@ -51,6 +51,8 @@ std::array<EventQueue, 6> event_queues;
 
 // The two TriggerMode registers occupy independent selector banks.
 constexpr uint64_t xml_address = 0x1000;
+constexpr uint64_t long_text_address = 120;
+constexpr size_t long_text_bytes = 160;
 constexpr char node_xml[] = R"xml(
 <RegisterDescription xmlns="http://www.genicam.org/GenApi/Version_1_1"
     ModelName="NodeFixture" VendorName="IrisTests" ToolTip="Writable node fixture"
@@ -98,6 +100,9 @@ constexpr char node_xml[] = R"xml(
   </IntReg>
   <StringReg Name="DeviceUserID" NameSpace="Standard">
     <Address>16</Address><Length>16</Length><AccessMode>RW</AccessMode><pPort>Device</pPort>
+  </StringReg>
+  <StringReg Name="LongDeviceLabel">
+    <Address>120</Address><Length>160</Length><AccessMode>RO</AccessMode><pPort>Device</pPort>
   </StringReg>
   <Integer Name="Width" NameSpace="Standard">
     <pAlias>WidthRaw</pAlias>
@@ -317,7 +322,7 @@ bool node_port(PORT_HANDLE port)
     return (mode("nodes") || mode("invalidation-rollback") || mode("invalidation-malformed") ||
             mode("invalidation-oversized") || mode("port-access") ||
             std::strncmp(scenario, "xml-", 4) == 0 || std::strncmp(scenario, "stacking", 8) == 0 ||
-            mode("example") || mode("chunk") || mode("chunk-typed") || mode("bad-chunk") || chunk_data_size() ||
+            mode("example") || mode("changing-text") || mode("chunk") || mode("chunk-typed") || mode("bad-chunk") || chunk_data_size() ||
             mode("gendc-chunk") || mode("gendc-xml") || mode("multipart-chunk") ||
             mode("multipart-chunk-overlap") || mode("multipart-chunk-only") || mode("chunk-duplicate") ||
             mode("chunk-overlap") || mode("gendc-chunk-duplicate")) &&
@@ -1171,6 +1176,18 @@ EXPORT(GCReadPort)(PORT_HANDLE port, uint64_t address, void *out, size_t *size)
     }
     if (mode("xml-indexed") && address == xml_address + 2 && *size == sizeof(node_xml) - 1) {
         std::memset(out, 'x', *size);
+        return GC_ERR_SUCCESS;
+    }
+    if (address == long_text_address && *size == long_text_bytes) {
+        std::memset(out, 'x', *size - 1);
+        static_cast<char *>(out)[*size - 1] = '\0';
+        return GC_ERR_SUCCESS;
+    }
+    if (mode("changing-text") && address == 16 && *size == 16) {
+        const char *value = registers[16] ? "longer" : "short";
+        std::memset(out, 0, *size);
+        std::memcpy(out, value, std::strlen(value));
+        registers[16] = 1;
         return GC_ERR_SUCCESS;
     }
     if (address > registers.size() || *size > registers.size() - address)
